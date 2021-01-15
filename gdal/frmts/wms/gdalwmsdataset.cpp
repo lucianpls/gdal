@@ -456,13 +456,13 @@ CPLErr GDALWMSDataset::Initialize(CPLXMLNode *config, char **l_papszOpenOptions)
     // Same for Min, Max and NoData, defined per band or per dataset
     // If they are set as null strings, they clear the server declared values
     // Data values are attributes, they include NoData Min and Max
-    line = CPLGetXMLValue(config, "DataValues.NoData", nullptr);
+    line = CPLGetXMLValue(config, "DataValues.NoData", "");
     if (strlen(line)) {
         SetTileOO("@NDV", line);
         WMSSetNoDataValue(line);
     }
-    WMSSetMinValue(CPLGetXMLValue(config,"DataValues.min",nullptr));
-    WMSSetMaxValue(CPLGetXMLValue(config,"DataValues.max",nullptr));
+    WMSSetMinValue(CPLGetXMLValue(config, "DataValues.min", nullptr));
+    WMSSetMaxValue(CPLGetXMLValue(config, "DataValues.max", nullptr));
 
     // Finish the minidriver initialization
     if (ret == CE_None)
@@ -564,7 +564,7 @@ CPLErr GDALWMSDataset::AdviseRead(int x0, int y0,
 }
 
 static void list2vec(std::vector<double>& v, const char* pszList) {
-    if ((pszList == nullptr) || (pszList[0] == 0)) return;
+    if (pszList == nullptr) return;
     char** papszTokens = CSLTokenizeString2(pszList, " \t\n\r", CSLT_STRIPLEADSPACES | CSLT_STRIPENDSPACES);
     v.clear();
     for (int i = 0; i < CSLCount(papszTokens); i++)
