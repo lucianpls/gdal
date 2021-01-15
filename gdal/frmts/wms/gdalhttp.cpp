@@ -30,7 +30,8 @@
  ****************************************************************************/
 
 #include "wmsdriver.h"
-#include <algorithm>
+#include "gdalhttp.h"
+#include <curl/curl.h>
 
 #if LIBCURL_VERSION_NUM < 0x071c00
 // Needed for curl_multi_wait()

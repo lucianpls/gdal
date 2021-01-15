@@ -41,8 +41,6 @@
 #include <vector>
 #include <utility>
 
-#include <curl/curl.h>
-
 #include "cpl_conv.h"
 #include "cpl_http.h"
 #include "gdal_alg.h"
@@ -70,7 +68,6 @@ void URLPrepare(CPLString &url);
 // void URLAppend(CPLString *url, const char *s);
 // void URLAppendF(CPLString *url, const char *s, ...) CPL_PRINT_FUNC_FORMAT (2, 3);
 // void URLAppend(CPLString *url, const CPLString &s);
-CPLString BufferToVSIFile(GByte *buffer, size_t size);
 
 int StrToBool(const char *p);
 int URLSearchAndReplace (CPLString *base, const char *search, const char *fmt, ...) CPL_PRINT_FUNC_FORMAT (3, 4);
@@ -361,33 +358,19 @@ public:
         m_bNeedsDataWindow = flag;
     }
 
-    static void list2vec(std::vector<double> &v,const char *pszList) {
-        if ((pszList==nullptr)||(pszList[0]==0)) return;
-        char **papszTokens=CSLTokenizeString2(pszList," \t\n\r",
-                                              CSLT_STRIPLEADSPACES|CSLT_STRIPENDSPACES);
-        v.clear();
-        for (int i=0;i<CSLCount(papszTokens);i++)
-            v.push_back(CPLStrtod(papszTokens[i],nullptr));
-        CSLDestroy(papszTokens);
-    }
-
-    void WMSSetNoDataValue(const char * pszNoData) {
-        list2vec(vNoData,pszNoData);
-    }
-
-    void WMSSetMinValue(const char * pszMin) {
-        list2vec(vMin,pszMin);
-    }
-
-    void WMSSetMaxValue(const char * pszMax) {
-        list2vec(vMax,pszMax);
-    }
+    // Set open options for tiles
+    // Works like a C++ <set>
+    // If the name is already set, the new value will overwrite the old
+    // If the value is nullptr or empty, the entry for name will be removed
+    void SetTileOO(const char* pszName, const char* pszValue);
 
     void SetXML(const char *psz) {
-        m_osXML.clear();
-        if (psz)
-            m_osXML = psz;
+        m_osXML = (psz == nullptr) ? "" : psz;
     }
+
+    void WMSSetNoDataValue(const char* pszNoData);
+    void WMSSetMinValue(const char* pszMin);
+    void WMSSetMaxValue(const char* pszMax);
 
     static GDALDataset* Open(GDALOpenInfo *poOpenInfo);
     static int Identify(GDALOpenInfo *poOpenInfo);

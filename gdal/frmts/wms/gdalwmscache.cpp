@@ -32,9 +32,6 @@
 #include "cpl_md5.h"
 #include "wmsdriver.h"
 
-CPL_CVSID("$Id$")
-
-
 static void CleanCacheThread( void *pData )
 {
     GDALWMSCache *pCache = static_cast<GDALWMSCache *>(pData);

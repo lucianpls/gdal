@@ -32,18 +32,7 @@
 #include "wmsdriver.h"
 #include "minidriver_tiled_wms.h"
 
-CPL_CVSID("$Id$")
-
 static const char SIG[] = "GDAL_WMS TiledWMS: ";
-
-/*
- *\brief Read a number from an xml element
- */
-
-static double getXMLNum(CPLXMLNode *poRoot, const char *pszPath, const char *pszDefault)
-{
-    return CPLAtof(CPLGetXMLValue(poRoot, pszPath, pszDefault));
-}
 
 /*
  *\brief Read a ColorEntry XML node, return a GDALColorEntry structure
@@ -53,10 +42,10 @@ static double getXMLNum(CPLXMLNode *poRoot, const char *pszPath, const char *psz
 static GDALColorEntry GetXMLColorEntry(CPLXMLNode *p)
 {
     GDALColorEntry ce;
-    ce.c1 = static_cast<short>(getXMLNum(p, "c1", "0"));
-    ce.c2 = static_cast<short>(getXMLNum(p, "c2", "0"));
-    ce.c3 = static_cast<short>(getXMLNum(p, "c3", "0"));
-    ce.c4 = static_cast<short>(getXMLNum(p, "c4", "255"));
+    ce.c1 = static_cast<short>(atoi(CPLGetXMLValue(p, "c1", "0")));
+    ce.c2 = static_cast<short>(atoi(CPLGetXMLValue(p, "c2", "0")));
+    ce.c3 = static_cast<short>(atoi(CPLGetXMLValue(p, "c3", "0")));
+    ce.c4 = static_cast<short>(atoi(CPLGetXMLValue(p, "c4", "255")));
     return ce;
 }
 
@@ -402,7 +391,10 @@ CPLErr WMSMiniDriver_TiledWMS::Initialize(CPLXMLNode *config, CPL_UNUSED char **
         // Data values are attributes, they include NoData Min and Max
         if (nullptr != CPLGetXMLNode(TG, "DataValues")) {
             const char *nodata = CPLGetXMLValue(TG, "DataValues.NoData", nullptr);
-            if (nodata != nullptr) m_parent_dataset->WMSSetNoDataValue(nodata);
+            if (nodata != nullptr) {
+                m_parent_dataset->WMSSetNoDataValue(nodata);
+                m_parent_dataset->SetTileOO("@NDV", nodata);
+            }
             const char *min = CPLGetXMLValue(TG, "DataValues.min", nullptr);
             if (min != nullptr) m_parent_dataset->WMSSetMinValue(min);
             const char *max = CPLGetXMLValue(TG, "DataValues.max", nullptr);
@@ -455,7 +447,7 @@ CPLErr WMSMiniDriver_TiledWMS::Initialize(CPLXMLNode *config, CPL_UNUSED char **
         if ((band_count == 1) && CPLGetXMLNode(TG, "Palette")) {
             CPLXMLNode *node = CPLGetXMLNode(TG, "Palette");
 
-            int entries = static_cast<int>(getXMLNum(node, "Size", "255"));
+            int entries = atoi(CPLGetXMLValue(node, "Size", "255"));
             GDALPaletteInterp eInterp = GPI_RGB;
 
             CPLString pModel = CPLGetXMLValue(node, "Model", "RGB");
@@ -480,7 +472,7 @@ CPLErr WMSMiniDriver_TiledWMS::Initialize(CPLXMLNode *config, CPL_UNUSED char **
                 CPLXMLNode *p = CPLGetXMLNode(node, "Entry");
                 if (p) {
                     // Initialize the first entry
-                    start_idx = static_cast<int>(getXMLNum(p, "idx", "0"));
+                    start_idx = atoi(CPLGetXMLValue(p, "idx", "0"));
                     ce_start = GetXMLColorEntry(p);
 
                     if (start_idx < 0)
@@ -490,7 +482,7 @@ CPLErr WMSMiniDriver_TiledWMS::Initialize(CPLXMLNode *config, CPL_UNUSED char **
                     while (nullptr != (p = SearchXMLSiblings(p, "Entry"))) {
                         // For every entry, create a ramp
                         ce_end = GetXMLColorEntry(p);
-                        end_idx = static_cast<int>(getXMLNum(p, "idx", CPLOPrintf("%d", start_idx + 1)));
+                        end_idx = atoi(CPLGetXMLValue(p, "idx", CPLOPrintf("%d", start_idx + 1)));
                         if ((end_idx <= start_idx) || (start_idx >= entries))
                             throw CPLOPrintf("%s Index Error at index %d", SIG, end_idx);
 

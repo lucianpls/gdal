@@ -31,12 +31,7 @@
 #include "wmsdriver.h"
 #include "minidriver_wms.h"
 
-#include <algorithm>
-
-CPL_CVSID("$Id$")
-
 WMSMiniDriver_WMS::WMSMiniDriver_WMS() : m_iversion(0) {}
-
 WMSMiniDriver_WMS::~WMSMiniDriver_WMS() {}
 
 static double GetBBoxCoord(const GDALWMSImageRequestInfo &iri, char what) {

@@ -47,9 +47,6 @@
 #include "cpl_json.h"
 
 #include <limits>
-#include <utility>
-
-CPL_CVSID("$Id$")
 
 //
 // A static map holding seen server GetTileService responses, per process

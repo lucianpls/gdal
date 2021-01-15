@@ -30,12 +30,7 @@
 #include "wmsdriver.h"
 #include "minidriver_arcgis_server.h"
 
-#include <algorithm>
-
-CPL_CVSID("$Id$")
-
 WMSMiniDriver_AGS::WMSMiniDriver_AGS() {}
-
 WMSMiniDriver_AGS::~WMSMiniDriver_AGS() {}
 
 static double GetBBoxCoord(const GDALWMSImageRequestInfo &iri, char what)

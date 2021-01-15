@@ -55,7 +55,7 @@ struct WMSHTTPRequest {
     size_t nDataAlloc;
 
     /* curl internal stuff */
-    CURL *m_curl_handle;
+    void *m_curl_handle;
     struct curl_slist* m_headers;
     // Which tile is being requested
     int x, y;

@@ -31,8 +31,6 @@
 
 #include "wmsdriver.h"
 
-CPL_CVSID("$Id$")
-
 GDALWMSRasterBand::GDALWMSRasterBand(GDALWMSDataset *parent_dataset, int band,
                                         double scale):
     m_parent_dataset(parent_dataset),
@@ -80,6 +78,14 @@ GDALWMSRasterBand::~GDALWMSRasterBand() {
         m_overviews.pop_back();
     }
  }
+
+static CPLString BufferToVSIFile(GByte* buffer, size_t size) {
+    CPLString file_name(CPLOPrintf("/vsimem/wms/%p/wmsresult.dat", buffer));
+    VSILFILE* f = VSIFileFromMemBuffer(file_name.c_str(), buffer, size, false);
+    if (f == nullptr) return CPLString();
+    VSIFCloseL(f);
+    return file_name;
+}
 
 // Request for x, y but all blocks between bx0-bx1 and by0-by1 should be read
 CPLErr GDALWMSRasterBand::ReadBlocks(int x, int y, void *buffer, int bx0, int by0, int bx1, int by1, int advise_read) {

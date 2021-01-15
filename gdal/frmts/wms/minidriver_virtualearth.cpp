@@ -30,16 +30,11 @@
 #include "wmsdriver.h"
 #include "minidriver_virtualearth.h"
 
-#include <algorithm>
-
-CPL_CVSID("$Id$")
-
 // These should be global, they are used all over the place
 const double SPHERICAL_RADIUS = 6378137.0;
 const double MAX_GM = SPHERICAL_RADIUS * M_PI;  // 20037508.342789244
 
 WMSMiniDriver_VirtualEarth::WMSMiniDriver_VirtualEarth() {}
-
 WMSMiniDriver_VirtualEarth::~WMSMiniDriver_VirtualEarth() {}
 
 CPLErr WMSMiniDriver_VirtualEarth::Initialize(CPLXMLNode *config, CPL_UNUSED char **papszOpenOptions)

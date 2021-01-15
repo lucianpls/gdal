@@ -28,8 +28,6 @@
 
 #include "wmsdriver.h"
 
-CPL_CVSID("$Id$")
-
 CPLString ProjToWKT(const CPLString &proj) {
     char* wkt = nullptr;
     OGRSpatialReference sr;
@@ -63,16 +61,6 @@ void URLPrepare(CPLString &url) {
         if (*url.rbegin() != '?' && *url.rbegin() != '&')
             url.append("&");
     }
-}
-
-CPLString BufferToVSIFile(GByte *buffer, size_t size) {
-    CPLString file_name;
-
-    file_name.Printf("/vsimem/wms/%p/wmsresult.dat", buffer);
-    VSILFILE *f = VSIFileFromMemBuffer(file_name.c_str(), buffer, size, false);
-    if (f == nullptr) return CPLString();
-    VSIFCloseL(f);
-    return file_name;
 }
 
 int VersionStringToInt(const char *version) {

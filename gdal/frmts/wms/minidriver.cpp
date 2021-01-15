@@ -34,8 +34,6 @@
 
 #include "wmsdriver.h"
 
-CPL_CVSID("$Id$")
-
 class WMSMiniDriverManager {
 public:
     WMSMiniDriverManager() {}

@@ -30,10 +30,7 @@
 #include "wmsdriver.h"
 #include "minidriver_tileservice.h"
 
-CPL_CVSID("$Id$")
-
 WMSMiniDriver_TileService::WMSMiniDriver_TileService() {}
-
 WMSMiniDriver_TileService::~WMSMiniDriver_TileService() {}
 
 CPLErr WMSMiniDriver_TileService::Initialize(CPLXMLNode *config, CPL_UNUSED char **papszOpenOptions) {

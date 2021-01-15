@@ -37,16 +37,6 @@
  ***************************************************************************/
 
 #include "wmsdriver.h"
-#include "minidriver_wms.h"
-#include "minidriver_tileservice.h"
-#include "minidriver_worldwind.h"
-#include "minidriver_tms.h"
-#include "minidriver_tiled_wms.h"
-#include "minidriver_virtualearth.h"
-
-#include <algorithm>
-
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                           GDALWMSDataset()                           */
@@ -96,155 +86,101 @@ GDALWMSDataset::~GDALWMSDataset() {
 /************************************************************************/
 CPLErr GDALWMSDataset::Initialize(CPLXMLNode *config, char **l_papszOpenOptions) {
     CPLErr ret = CE_None;
+    const char* line;
 
-    char* pszXML = CPLSerializeXMLTree( config );
-    if (pszXML)
-    {
-        m_osXML = pszXML;
-        CPLFree(pszXML);
-    }
-
-    // Generic options that apply to all minidrivers
-
-    // UserPwd
-    const char *pszUserPwd = CPLGetXMLValue(config, "UserPwd", "");
-    if (pszUserPwd[0] != '\0')
-        m_osUserPwd = pszUserPwd;
-
-    const char *pszUserAgent = CPLGetXMLValue(config, "UserAgent", "");
-    if (pszUserAgent[0] != '\0')
-        m_osUserAgent = pszUserAgent;
-    else
-        m_osUserAgent = CPLGetConfigOption("GDAL_HTTP_USERAGENT", "");
-
-    const char *pszReferer = CPLGetXMLValue(config, "Referer", "");
-    if (pszReferer[0] != '\0')
-        m_osReferer = pszReferer;
-
-    {
-        const char *pszHttpZeroBlockCodes = CPLGetXMLValue(config, "ZeroBlockHttpCodes", "");
-        if (pszHttpZeroBlockCodes[0] == '\0') {
-            m_http_zeroblock_codes.insert(204);
-        }
-        else {
-            char **kv = CSLTokenizeString2(pszHttpZeroBlockCodes, ",", CSLT_HONOURSTRINGS);
-            for (int i = 0; i < CSLCount(kv); i++) {
-                int code = atoi(kv[i]);
-                if (code <= 0) {
-                    CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Invalid value of ZeroBlockHttpCodes "
-                        "\"%s\", comma separated HTTP response codes expected.", kv[i]);
-                    ret = CE_Failure;
-                    break;
-                }
-                m_http_zeroblock_codes.insert(code);
-            }
-            CSLDestroy(kv);
-        }
-    }
-
-    if (ret == CE_None) {
-        const char *pszZeroExceptions = CPLGetXMLValue(config, "ZeroBlockOnServerException", "");
-        if (pszZeroExceptions[0] != '\0') {
-            m_zeroblock_on_serverexceptions = StrToBool(pszZeroExceptions);
-            if (m_zeroblock_on_serverexceptions == -1) {
-                CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Invalid value of ZeroBlockOnServerException "
-                    "\"%s\", true/false expected.", pszZeroExceptions);
-                ret = CE_Failure;
-            }
-        }
-    }
-
-    if (ret == CE_None) {
-        const char *max_conn = CPLGetXMLValue(config, "MaxConnections", "");
-        if (max_conn[0] == '\0') {
-            max_conn = CPLGetConfigOption("GDAL_MAX_CONNECTIONS", "");
-        }
-        if (max_conn[0] != '\0') {
-            m_http_max_conn = atoi(max_conn);
-        }
-        else {
-            m_http_max_conn = 2;
-        }
-    }
-
-    if (ret == CE_None) {
-        const char *timeout = CPLGetXMLValue(config, "Timeout", "");
-        if (timeout[0] != '\0') {
-            m_http_timeout = atoi(timeout);
-        }
-        else {
-            m_http_timeout = 300;
-        }
-    }
-
-    if (ret == CE_None) {
-        m_osAccept = CPLGetXMLValue(config, "Accept", "");
-    }
-
-    if (ret == CE_None) {
-        const char *offline_mode = CPLGetXMLValue(config, "OfflineMode", "");
-        if (offline_mode[0] != '\0') {
-            const int offline_mode_bool = StrToBool(offline_mode);
-            if (offline_mode_bool == -1) {
-                CPLError(CE_Failure, CPLE_AppDefined,
-                    "GDALWMS: Invalid value of OfflineMode, true / false expected.");
-                ret = CE_Failure;
-            }
-            else {
-                m_offline_mode = offline_mode_bool;
-            }
-        }
-        else {
-            m_offline_mode = 0;
-        }
-    }
-
-    if (ret == CE_None) {
-        const char *advise_read = CPLGetXMLValue(config, "AdviseRead", "");
-        if (advise_read[0] != '\0') {
-            const int advise_read_bool = StrToBool(advise_read);
-            if (advise_read_bool == -1) {
-                CPLError(CE_Failure, CPLE_AppDefined,
-                    "GDALWMS: Invalid value of AdviseRead, true / false expected.");
-                ret = CE_Failure;
-            }
-            else {
-                m_use_advise_read = advise_read_bool;
-            }
-        }
-        else {
-            m_use_advise_read = 0;
-        }
-    }
-
-    if (ret == CE_None) {
-        const char *verify_advise_read = CPLGetXMLValue(config, "VerifyAdviseRead", "");
-        if (m_use_advise_read) {
-            if (verify_advise_read[0] != '\0') {
-                const int verify_advise_read_bool = StrToBool(verify_advise_read);
-                if (verify_advise_read_bool == -1) {
-                    CPLError(CE_Failure, CPLE_AppDefined,
-                        "GDALWMS: Invalid value of VerifyAdviseRead, true / false expected.");
-                    ret = CE_Failure;
-                }
-                else {
-                    m_verify_advise_read = verify_advise_read_bool;
-                }
-            }
-            else {
-                m_verify_advise_read = 1;
-            }
-        }
-    }
-
-    CPLXMLNode *service_node = CPLGetXMLNode(config, "Service");
-    if (service_node == nullptr) {
+    // Check that the service requested is known first, get a minidriver
+    CPLXMLNode* service_node = CPLGetXMLNode(config, "Service");
+    if (service_node == nullptr ) {
         CPLError(CE_Failure, CPLE_AppDefined,
             "GDALWMS: No Service specified.");
         return CE_Failure;
     }
 
-    if (ret == CE_None) {
+    const CPLString service_name = CPLGetXMLValue(service_node, "name", "");
+    if (service_name.empty()) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: No Service name specified.");
+        return CE_Failure;
+    }
+
+    m_mini_driver = NewWMSMiniDriver(service_name);
+    if (m_mini_driver == nullptr) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: No mini-driver registered for '%s'.", service_name.c_str());
+        return CE_Failure;
+    }
+
+    char* pszXML = CPLSerializeXMLTree(config);
+    if (pszXML != nullptr) {
+        m_osXML = pszXML;
+        CPLFree(pszXML);
+    }
+
+    // Generic options that apply to all minidrivers
+    m_osUserPwd = CPLGetXMLValue(config, "UserPwd", "");
+    m_osUserAgent = CPLGetXMLValue(config, "UserAgent", CPLGetConfigOption("GDAL_HTTP_USERAGENT", ""));
+    m_osReferer = CPLGetXMLValue(config, "Referer", "");
+
+    m_http_zeroblock_codes.insert(204); // HTTP_NO_CONTENT
+    line = CPLGetXMLValue(config, "ZeroBlockHttpCodes", "");
+    if (strlen(line) != 0) {
+        char **kv = CSLTokenizeString2(line, ",", CSLT_HONOURSTRINGS);
+        for (int i = 0; i < CSLCount(kv); i++) {
+            int code = atoi(kv[i]);
+            if (code <= 0) {
+                CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Invalid value of ZeroBlockHttpCodes "
+                    "\"%s\", comma separated HTTP response integer codes expected.", kv[i]);
+                ret = CE_Failure;
+                break;
+            }
+            m_http_zeroblock_codes.insert(code);
+        }
+        CSLDestroy(kv);
+    }
+
+    m_zeroblock_on_serverexceptions = StrToBool(CPLGetXMLValue(config, "ZeroBlockOnServerException", "false"));
+    if (m_zeroblock_on_serverexceptions < 0) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: Invalid value of ZeroBlockOnServerException, true/false expected.");
+        ret = CE_Failure;
+    }
+
+    m_http_max_conn = std::min(1, atoi(CPLGetXMLValue(config, "MaxConnections", CPLGetConfigOption("GDAL_MAX_CONNECTIONS", "2"))));
+    m_http_timeout = atoi(CPLGetXMLValue(config, "Timeout", "300"));
+    m_osAccept = CPLGetXMLValue(config, "Accept", "");
+
+    m_offline_mode = StrToBool(CPLGetXMLValue(config, "OfflineMode", "false"));
+    if (m_offline_mode < 0) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: Invalid value of OfflineMode, true / false expected.");
+        ret = CE_Failure;
+    }
+
+    m_use_advise_read = StrToBool(CPLGetXMLValue(config, "AdviseRead", "false"));
+    if (m_use_advise_read < 0) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: Invalid value of AdviseRead, true / false expected.");
+        ret = CE_Failure;
+    }
+
+    if (m_use_advise_read) {
+        // Defaults to true if m_use_advise_read is set
+        m_verify_advise_read = StrToBool(CPLGetXMLValue(config, "VerifyAdviseRead", "true"));
+        if (m_verify_advise_read < 0) {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                "GDALWMS: Invalid value of VerifyAdviseRead, true / false expected.");
+            ret = CE_Failure;
+        }
+    }
+
+    m_unsafeSsl = StrToBool(CPLGetXMLValue(config, "UnsafeSSL", "false"));
+    if (m_unsafeSsl == -1) {
+        CPLError(CE_Failure, CPLE_AppDefined,
+            "GDALWMS: Invalid value of UnsafeSSL: true or false expected.");
+        ret = CE_Failure;
+    }
+
+    if (ret == CE_None) { // This one does Initialize
         CPLXMLNode *cache_node = CPLGetXMLNode(config, "Cache");
         if (cache_node != nullptr) {
             m_cache = new GDALWMSCache();
@@ -265,46 +201,18 @@ CPLErr GDALWMSDataset::Initialize(CPLXMLNode *config, char **l_papszOpenOptions)
         }
     }
 
+    // Initialize the minidriver, which can set parameters for the dataset using member functions
+    m_mini_driver->m_parent_dataset = this;
     if (ret == CE_None) {
-        const int v = StrToBool(CPLGetXMLValue(config, "UnsafeSSL", "false"));
-        if (v == -1) {
-            CPLError(CE_Failure, CPLE_AppDefined,
-                "GDALWMS: Invalid value of UnsafeSSL: true or false expected.");
+        if (m_mini_driver->Initialize(service_node, l_papszOpenOptions) != CE_None)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Failed to initialize minidriver.");
             ret = CE_Failure;
         }
-        else {
-            m_unsafeSsl = v;
+        else
+        {
+            m_mini_driver->GetCapabilities(&m_mini_driver_caps);
         }
-    }
-
-    // Initialize the minidriver, which can set parameters for the dataset using member functions
-
-    const CPLString service_name = CPLGetXMLValue(service_node, "name", "");
-    if (service_name.empty()) {
-        CPLError(CE_Failure, CPLE_AppDefined,
-            "GDALWMS: No Service name specified.");
-        return CE_Failure;
-    }
-
-    m_mini_driver = NewWMSMiniDriver(service_name);
-    if (m_mini_driver == nullptr) {
-        CPLError(CE_Failure, CPLE_AppDefined,
-            "GDALWMS: No mini-driver registered for '%s'.", service_name.c_str());
-        return CE_Failure;
-    }
-
-    // Set up minidriver
-    m_mini_driver->m_parent_dataset = this;
-    if (m_mini_driver->Initialize(service_node, l_papszOpenOptions) != CE_None)
-    {
-        CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Failed to initialize minidriver.");
-        delete m_mini_driver;
-        m_mini_driver = nullptr;
-        ret = CE_Failure;
-    }
-    else
-    {
-        m_mini_driver->GetCapabilities(&m_mini_driver_caps);
     }
 
     /*
@@ -319,198 +227,172 @@ CPLErr GDALWMSDataset::Initialize(CPLXMLNode *config, char **l_papszOpenOptions)
       It should also initialize and register the bands and overviews.
     */
 
-    if (m_data_window.m_sx<1)
+    if (ret == CE_None && m_data_window.m_sx<1)
     {
         int nOverviews = 0;
 
-        if (ret == CE_None)
+        m_block_size_x = atoi(CPLGetXMLValue(config, "BlockSizeX",
+            CPLString().Printf("%d", m_default_block_size_x)));
+        m_block_size_y = atoi(CPLGetXMLValue(config, "BlockSizeY",
+            CPLString().Printf("%d", m_default_block_size_y)));
+        if (m_block_size_x <= 0 || m_block_size_y <= 0)
         {
-            m_block_size_x = atoi(CPLGetXMLValue(config, "BlockSizeX",
-                CPLString().Printf("%d", m_default_block_size_x)));
-            m_block_size_y = atoi(CPLGetXMLValue(config, "BlockSizeY",
-                CPLString().Printf("%d", m_default_block_size_y)));
-            if (m_block_size_x <= 0 || m_block_size_y <= 0)
-            {
-                CPLError( CE_Failure, CPLE_AppDefined,
-                    "GDALWMS: Invalid value in BlockSizeX or BlockSizeY" );
-                ret = CE_Failure;
-            }
+            CPLError( CE_Failure, CPLE_AppDefined,
+                "GDALWMS: Invalid value in BlockSizeX or BlockSizeY" );
+            ret = CE_Failure;
+        }
+ 
+        m_clamp_requests = StrToBool(CPLGetXMLValue(config, "ClampRequests", "true"));
+        if (m_clamp_requests<0)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                "GDALWMS: Invalid value of ClampRequests, true/false expected.");
+            ret = CE_Failure;
+        }
+
+        CPLXMLNode *data_window_node = CPLGetXMLNode(config, "DataWindow");
+        if (data_window_node == nullptr && m_bNeedsDataWindow)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: DataWindow missing.");
+            ret = CE_Failure;
         }
 
         if (ret == CE_None)
         {
-            m_clamp_requests = StrToBool(CPLGetXMLValue(config, "ClampRequests", "true"));
-            if (m_clamp_requests<0)
-            {
-                CPLError(CE_Failure, CPLE_AppDefined,
-                    "GDALWMS: Invalid value of ClampRequests, true/false expected.");
-                ret = CE_Failure;
-            }
-        }
+            CPLString osDefaultX0, osDefaultX1, osDefaultY0, osDefaultY1;
+            CPLString osDefaultTileCountX, osDefaultTileCountY, osDefaultTileLevel;
+            CPLString osDefaultOverviewCount;
+            osDefaultX0.Printf("%.8f", m_default_data_window.m_x0);
+            osDefaultX1.Printf("%.8f", m_default_data_window.m_x1);
+            osDefaultY0.Printf("%.8f", m_default_data_window.m_y0);
+            osDefaultY1.Printf("%.8f", m_default_data_window.m_y1);
+            osDefaultTileCountX.Printf("%d", m_default_tile_count_x);
+            osDefaultTileCountY.Printf("%d", m_default_tile_count_y);
+            if (m_default_data_window.m_tlevel >= 0)
+                osDefaultTileLevel.Printf("%d", m_default_data_window.m_tlevel);
+            if (m_default_overview_count >= 0)
+                osDefaultOverviewCount.Printf("%d", m_default_overview_count);
+            const char *overview_count = CPLGetXMLValue(config, "OverviewCount", osDefaultOverviewCount);
+            const char *ulx = CPLGetXMLValue(data_window_node, "UpperLeftX", osDefaultX0);
+            const char *uly = CPLGetXMLValue(data_window_node, "UpperLeftY", osDefaultY0);
+            const char *lrx = CPLGetXMLValue(data_window_node, "LowerRightX", osDefaultX1);
+            const char *lry = CPLGetXMLValue(data_window_node, "LowerRightY", osDefaultY1);
+            const char *sx = CPLGetXMLValue(data_window_node, "SizeX", "");
+            const char *sy = CPLGetXMLValue(data_window_node, "SizeY", "");
+            const char *tx = CPLGetXMLValue(data_window_node, "TileX", "0");
+            const char *ty = CPLGetXMLValue(data_window_node, "TileY", "0");
+            const char *tlevel =
+                CPLGetXMLValue(data_window_node, "TileLevel", osDefaultTileLevel);
+            const char *str_tile_count_x =
+                CPLGetXMLValue(data_window_node, "TileCountX", osDefaultTileCountX);
+            const char *str_tile_count_y =
+                CPLGetXMLValue(data_window_node, "TileCountY", osDefaultTileCountY);
+            const char *y_origin = CPLGetXMLValue(data_window_node, "YOrigin", "default");
 
-        if (ret == CE_None)
-        {
-            CPLXMLNode *data_window_node = CPLGetXMLNode(config, "DataWindow");
-            if (data_window_node == nullptr && m_bNeedsDataWindow)
+            if ((ulx[0] != '\0') && (uly[0] != '\0') && (lrx[0] != '\0') && (lry[0] != '\0'))
             {
-                CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: DataWindow missing.");
-                ret = CE_Failure;
+                m_data_window.m_x0 = CPLAtof(ulx);
+                m_data_window.m_y0 = CPLAtof(uly);
+                m_data_window.m_x1 = CPLAtof(lrx);
+                m_data_window.m_y1 = CPLAtof(lry);
             }
             else
             {
-                CPLString osDefaultX0, osDefaultX1, osDefaultY0, osDefaultY1;
-                CPLString osDefaultTileCountX, osDefaultTileCountY, osDefaultTileLevel;
-                CPLString osDefaultOverviewCount;
-                osDefaultX0.Printf("%.8f", m_default_data_window.m_x0);
-                osDefaultX1.Printf("%.8f", m_default_data_window.m_x1);
-                osDefaultY0.Printf("%.8f", m_default_data_window.m_y0);
-                osDefaultY1.Printf("%.8f", m_default_data_window.m_y1);
-                osDefaultTileCountX.Printf("%d", m_default_tile_count_x);
-                osDefaultTileCountY.Printf("%d", m_default_tile_count_y);
-                if (m_default_data_window.m_tlevel >= 0)
-                    osDefaultTileLevel.Printf("%d", m_default_data_window.m_tlevel);
-                if (m_default_overview_count >= 0)
-                    osDefaultOverviewCount.Printf("%d", m_default_overview_count);
-                const char *overview_count = CPLGetXMLValue(config, "OverviewCount", osDefaultOverviewCount);
-                const char *ulx = CPLGetXMLValue(data_window_node, "UpperLeftX", osDefaultX0);
-                const char *uly = CPLGetXMLValue(data_window_node, "UpperLeftY", osDefaultY0);
-                const char *lrx = CPLGetXMLValue(data_window_node, "LowerRightX", osDefaultX1);
-                const char *lry = CPLGetXMLValue(data_window_node, "LowerRightY", osDefaultY1);
-                const char *sx = CPLGetXMLValue(data_window_node, "SizeX", "");
-                const char *sy = CPLGetXMLValue(data_window_node, "SizeY", "");
-                const char *tx = CPLGetXMLValue(data_window_node, "TileX", "0");
-                const char *ty = CPLGetXMLValue(data_window_node, "TileY", "0");
-                const char *tlevel =
-                    CPLGetXMLValue(data_window_node, "TileLevel", osDefaultTileLevel);
-                const char *str_tile_count_x =
-                    CPLGetXMLValue(data_window_node, "TileCountX", osDefaultTileCountX);
-                const char *str_tile_count_y =
-                    CPLGetXMLValue(data_window_node, "TileCountY", osDefaultTileCountY);
-                const char *y_origin = CPLGetXMLValue(data_window_node, "YOrigin", "default");
+                CPLError(CE_Failure, CPLE_AppDefined,
+                            "GDALWMS: Mandatory elements of DataWindow missing: "
+                            "UpperLeftX, UpperLeftY, LowerRightX, LowerRightY.");
+                ret = CE_Failure;
+            }
 
-                if ((ulx[0] != '\0') && (uly[0] != '\0') && (lrx[0] != '\0') && (lry[0] != '\0'))
+            m_data_window.m_tlevel = atoi(tlevel);
+
+            if (ret == CE_None)
+            {
+                if ((sx[0] != '\0') && (sy[0] != '\0'))
                 {
-                    m_data_window.m_x0 = CPLAtof(ulx);
-                    m_data_window.m_y0 = CPLAtof(uly);
-                    m_data_window.m_x1 = CPLAtof(lrx);
-                    m_data_window.m_y1 = CPLAtof(lry);
+                    m_data_window.m_sx = atoi(sx);
+                    m_data_window.m_sy = atoi(sy);
+                }
+                else if ((tlevel[0] != '\0') && (str_tile_count_x[0] != '\0') && (str_tile_count_y[0] != '\0'))
+                {
+                    int tile_count_x = atoi(str_tile_count_x);
+                    int tile_count_y = atoi(str_tile_count_y);
+                    m_data_window.m_sx = tile_count_x * m_block_size_x * (1 << m_data_window.m_tlevel);
+                    m_data_window.m_sy = tile_count_y * m_block_size_y * (1 << m_data_window.m_tlevel);
                 }
                 else
                 {
                     CPLError(CE_Failure, CPLE_AppDefined,
-                                "GDALWMS: Mandatory elements of DataWindow missing: "
-                                "UpperLeftX, UpperLeftY, LowerRightX, LowerRightY.");
+                                "GDALWMS: Mandatory elements of DataWindow missing: SizeX, SizeY.");
                     ret = CE_Failure;
                 }
-
-                m_data_window.m_tlevel = atoi(tlevel);
-
-                if (ret == CE_None)
-                {
-                    if ((sx[0] != '\0') && (sy[0] != '\0'))
-                    {
-                        m_data_window.m_sx = atoi(sx);
-                        m_data_window.m_sy = atoi(sy);
-                    }
-                    else if ((tlevel[0] != '\0') && (str_tile_count_x[0] != '\0') && (str_tile_count_y[0] != '\0'))
-                    {
-                        int tile_count_x = atoi(str_tile_count_x);
-                        int tile_count_y = atoi(str_tile_count_y);
-                        m_data_window.m_sx = tile_count_x * m_block_size_x * (1 << m_data_window.m_tlevel);
-                        m_data_window.m_sy = tile_count_y * m_block_size_y * (1 << m_data_window.m_tlevel);
-                    }
-                    else
-                    {
-                        CPLError(CE_Failure, CPLE_AppDefined,
-                                 "GDALWMS: Mandatory elements of DataWindow missing: SizeX, SizeY.");
-                        ret = CE_Failure;
-                    }
-                }
-                if (ret == CE_None)
-                {
-                    if ((tx[0] != '\0') && (ty[0] != '\0'))
-                    {
-                        m_data_window.m_tx = atoi(tx);
-                        m_data_window.m_ty = atoi(ty);
-                    }
-                    else
-                    {
-                        CPLError(CE_Failure, CPLE_AppDefined,
-                                 "GDALWMS: Mandatory elements of DataWindow missing: TileX, TileY.");
-                        ret = CE_Failure;
-                    }
-                }
-
-                if (ret == CE_None)
-                {
-                    if (overview_count[0] != '\0')
-                    {
-                        nOverviews = atoi(overview_count);
-                    }
-                    else if (tlevel[0] != '\0')
-                    {
-                        nOverviews = m_data_window.m_tlevel;
-                    }
-                    else
-                    {
-                        const int min_overview_size =
-                            std::max(32, std::min(m_block_size_x,
-                                                  m_block_size_y));
-                        double a =
-                            log(static_cast<double>(
-                                std::min(m_data_window.m_sx,
-                                         m_data_window.m_sy))) / log(2.0)
-                            - log(static_cast<double>(min_overview_size)) /
-                            log(2.0);
-                        nOverviews =
-                            std::max(0,
-                                     std::min(static_cast<int>(ceil(a)), 32));
-                    }
-                }
-                if (ret == CE_None)
-                {
-                    CPLString y_origin_str = y_origin;
-                    if (y_origin_str == "top") {
-                        m_data_window.m_y_origin = GDALWMSDataWindow::TOP;
-                    } else if (y_origin_str == "bottom") {
-                        m_data_window.m_y_origin = GDALWMSDataWindow::BOTTOM;
-                    } else if (y_origin_str == "default") {
-                        m_data_window.m_y_origin = GDALWMSDataWindow::DEFAULT;
-                    } else {
-                        CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: DataWindow YOrigin must be set to "
-                                 "one of 'default', 'top', or 'bottom', not '%s'.", y_origin_str.c_str());
-                        ret = CE_Failure;
-                    }
-                }
             }
-        }
 
-        if (ret == CE_None)
-        {
-            if (nBands<1)
-                nBands=atoi(CPLGetXMLValue(config,"BandsCount","3"));
-            if (nBands<1)
+            if (ret == CE_None)
             {
-                CPLError(CE_Failure, CPLE_AppDefined,
-                         "GDALWMS: Bad number of bands.");
-                ret = CE_Failure;
+                if ((tx[0] != '\0') && (ty[0] != '\0'))
+                {
+                    m_data_window.m_tx = atoi(tx);
+                    m_data_window.m_ty = atoi(ty);
+                }
+                else
+                {
+                    CPLError(CE_Failure, CPLE_AppDefined,
+                                "GDALWMS: Mandatory elements of DataWindow missing: TileX, TileY.");
+                    ret = CE_Failure;
+                }
+            }
+
+            if (ret == CE_None)
+            {
+                if (overview_count[0] != '\0')
+                {
+                    nOverviews = atoi(overview_count);
+                }
+                else if (tlevel[0] != '\0')
+                {
+                    nOverviews = m_data_window.m_tlevel;
+                }
+                else
+                {
+                    const int min_overview_size = std::max(32, std::min(m_block_size_x, m_block_size_y));
+                    double a = log(static_cast<double>(std::min(m_data_window.m_sx, m_data_window.m_sy))) / log(2.0)
+                             - log(static_cast<double>(min_overview_size)) / log(2.0);
+                    nOverviews = std::max(0, std::min(static_cast<int>(ceil(a)), 32));
+                }
+
+                CPLString y_origin_str = y_origin;
+                if (y_origin_str == "top") {
+                    m_data_window.m_y_origin = GDALWMSDataWindow::TOP;
+                } else if (y_origin_str == "bottom") {
+                    m_data_window.m_y_origin = GDALWMSDataWindow::BOTTOM;
+                } else if (y_origin_str == "default") {
+                    m_data_window.m_y_origin = GDALWMSDataWindow::DEFAULT;
+                } else {
+                    CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: DataWindow YOrigin must be set to "
+                                "one of 'default', 'top', or 'bottom', not '%s'.", y_origin_str.c_str());
+                    ret = CE_Failure;
+                }
             }
         }
 
-        if (ret == CE_None)
-        {
-            const char *data_type = CPLGetXMLValue(config, "DataType", "Byte");
-            m_data_type = GDALGetDataTypeByName(data_type);
-            if (m_data_type == GDT_Unknown || m_data_type >= GDT_TypeCount)
-            {
-                CPLError(CE_Failure, CPLE_AppDefined,
-                    "GDALWMS: Invalid value in DataType. Data type \"%s\" is not supported.", data_type);
-                ret = CE_Failure;
-            }
-            else if (!STARTS_WITH(data_type, "Byte")) { // Valid, non-byte
-                m_tileOO = CSLSetNameValue(m_tileOO, "@DATATYPE", data_type);
-            }
+        nBands = atoi(CPLGetXMLValue(config, "BandsCount", "3"));
+        if (nBands<1) {
+            CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Bad number of bands.");
+            ret = CE_Failure;
         }
+
+        line = CPLGetXMLValue(config, "DataType", "Byte");
+        if (!STARTS_WITH(line, "Byte")) // Valid, non-byte
+            SetTileOO("@DATATYPE", line);
+        m_data_type = GDALGetDataTypeByName(line);
+        if (m_data_type == GDT_Unknown || m_data_type >= GDT_TypeCount)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                "GDALWMS: Invalid value in DataType. Data type not supported.");
+            ret = CE_Failure;
+        }
+
 
         // Initialize the bands and the overviews.  Assumes overviews are powers of two
         if (ret == CE_None)
@@ -539,53 +421,52 @@ CPLErr GDALWMSDataset::Initialize(CPLXMLNode *config, char **l_papszOpenOptions)
                 double scale = 0.5;
                 for (int j = 0; j < nOverviews; ++j)
                 {
-                    if( !band->AddOverview(scale) )
+                    if (!band->AddOverview(scale)) {
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                            "GDALWMS: Can't add overview for band %d, scale %f", i + 1, scale);
+                        ret = CE_Failure;
                         break;
+                    }
                     band->m_color_interp = color_interp;
                     scale *= 0.5;
                 }
+                if (ret != CE_None)
+                    break;
             }
+        }
+    } // bypassed region if minidriver choses to initialize size
+
+    // Let the local configuration override the minidriver supplied values 
+    line = CPLGetXMLValue(config, "Projection", "");
+    if (strlen(line) > 0) {
+        m_projection = ProjToWKT(line);
+        if (m_projection.empty()) {
+            CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Bad projection specified.");
+            ret = CE_Failure;
         }
     }
 
-    // Let the local configuration override the minidriver supplied projection
-    if (ret == CE_None) {
-        const char *proj = CPLGetXMLValue(config, "Projection", "");
-        if (proj[0] != '\0') {
-            m_projection = ProjToWKT(proj);
-            if (m_projection.empty()) {
-                CPLError(CE_Failure, CPLE_AppDefined, "GDALWMS: Bad projection specified.");
-                ret = CE_Failure;
-            }
-        }
+    // Try the minidriver one more time
+    if (m_projection.empty()) {
+        const char* proj = m_mini_driver->GetProjectionInWKT();
+        if (proj != nullptr)
+            m_projection = proj;
     }
 
     // Same for Min, Max and NoData, defined per band or per dataset
     // If they are set as null strings, they clear the server declared values
-    if (ret == CE_None) {
-        // Data values are attributes, they include NoData Min and Max
-        if (nullptr!=CPLGetXMLNode(config,"DataValues")) {
-            const char *nodata=CPLGetXMLValue(config,"DataValues.NoData",nullptr);
-            if (nodata!=nullptr) WMSSetNoDataValue(nodata);
-            const char *min=CPLGetXMLValue(config,"DataValues.min",nullptr);
-            if (min!=nullptr) WMSSetMinValue(min);
-            const char *max=CPLGetXMLValue(config,"DataValues.max",nullptr);
-            if (max!=nullptr) WMSSetMaxValue(max);
-        }
+    // Data values are attributes, they include NoData Min and Max
+    line = CPLGetXMLValue(config, "DataValues.NoData", nullptr);
+    if (strlen(line)) {
+        SetTileOO("@NDV", line);
+        WMSSetNoDataValue(line);
     }
-
-    if (ret == CE_None) {
-        if (!m_projection.size()) {
-            const char *proj = m_mini_driver->GetProjectionInWKT();
-            if (proj != nullptr) {
-                m_projection = proj;
-            }
-        }
-    }
+    WMSSetMinValue(CPLGetXMLValue(config,"DataValues.min",nullptr));
+    WMSSetMaxValue(CPLGetXMLValue(config,"DataValues.max",nullptr));
 
     // Finish the minidriver initialization
     if (ret == CE_None)
-        m_mini_driver->EndInit();
+        ret = m_mini_driver->EndInit();
 
     return ret;
 }
@@ -682,6 +563,27 @@ CPLErr GDALWMSDataset::AdviseRead(int x0, int y0,
     return band->AdviseRead(x0, y0, sx, sy, bsx, bsy, bdt, options);
 }
 
+static void list2vec(std::vector<double>& v, const char* pszList) {
+    if ((pszList == nullptr) || (pszList[0] == 0)) return;
+    char** papszTokens = CSLTokenizeString2(pszList, " \t\n\r", CSLT_STRIPLEADSPACES | CSLT_STRIPENDSPACES);
+    v.clear();
+    for (int i = 0; i < CSLCount(papszTokens); i++)
+        v.push_back(CPLStrtod(papszTokens[i], nullptr));
+    CSLDestroy(papszTokens);
+}
+
+void GDALWMSDataset::WMSSetNoDataValue(const char* pszNoData) {
+    list2vec(vNoData, pszNoData);
+}
+
+void GDALWMSDataset::WMSSetMinValue(const char* pszMin) {
+    list2vec(vMin, pszMin);
+}
+
+void GDALWMSDataset::WMSSetMaxValue(const char* pszMax) {
+    list2vec(vMax, pszMax);
+}
+
 /************************************************************************/
 /*                      GetMetadataDomainList()                         */
 /************************************************************************/
@@ -740,4 +642,14 @@ const char * const * GDALWMSDataset::GetHTTPRequestOpts()
 
     m_http_options = opts;
     return m_http_options;
+}
+
+void GDALWMSDataset::SetTileOO(const char* pszName, const char* pszValue) {
+    if (pszName == nullptr || strlen(pszName) == 0)
+        return;
+    int oldidx = CSLFindName(m_tileOO, pszName);
+    if (oldidx >= 0)
+        m_tileOO = CSLRemoveStrings(m_tileOO, oldidx, 1, nullptr);
+    if (pszValue != nullptr && strlen(pszValue))
+        m_tileOO = CSLAddNameValue(m_tileOO, pszName, pszValue);
 }
