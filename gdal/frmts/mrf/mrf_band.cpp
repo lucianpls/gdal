@@ -18,7 +18,7 @@
 * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-* Copyright 2014-2015 Esri
+* Copyright 2014-2021 Esri
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@
 * Project:  Meta Raster File Format Driver Implementation, RasterBand
 * Purpose:  Implementation of Pile of Tile Format
 *
-* Author:   Lucian Plesea, Lucian.Plesea@jpl.nasa.gov, lplesea@esri.com
+* Author:   Lucian Plesea, Lucian.Plesea at jpl.nasa.gov, lplesea at esri.com
 *
 ****************************************************************************/
 
@@ -50,8 +50,6 @@
 #include <vector>
 #include <assert.h>
 #include "zlib.h"
-
-CPL_CVSID("$Id$")
 
 using std::vector;
 using std::string;
@@ -86,7 +84,6 @@ template <typename T> static void cpy_stride_out(void *dst, void *src, int c, in
 
 // Does every value in the buffer have the same value, using strict comparison
 template<typename T> inline int isAllVal(const T *b, size_t bytecount, double ndv)
-
 {
     T val = static_cast<T>(ndv);
     size_t count = bytecount / sizeof(T);
@@ -503,10 +500,7 @@ CPLErr MRFRasterBand::FetchBlock(int xblk, int yblk, void *buffer)
         vsz * cstride,  // pixel, line, band stride
         vsz * cstride * img.pagesize.x,
         (cstride != 1) ? vsz : vsz * img.pagesize.x * img.pagesize.y
-#if GDAL_VERSION_MAJOR >= 2
-        ,nullptr
-#endif
-        );
+        ,nullptr);
 
     if (ret != CE_None) return ret;
 

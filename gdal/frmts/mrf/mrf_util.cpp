@@ -18,7 +18,7 @@
 * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-* Copyright 2014-2015 Esri
+* Copyright 2014-2021 Esri
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -37,15 +37,13 @@
  *
  *  Functions used by the driver, should have prototypes in the header file
  *
- *  Author: Lucian Plesea
+* Author:   Lucian Plesea, Lucian.Plesea at jpl.nasa.gov, lplesea at esri.com
  */
 
 #include "marfa.h"
 #include <zlib.h>
 #include <algorithm>
 #include <limits>
-
-CPL_CVSID("$Id$")
 
 // LERC is not ready for big endian hosts for now
 #if defined(LERC) && defined(WORDS_BIGENDIAN)
@@ -410,26 +408,21 @@ CPLString PrintDouble(double d, const char *frmt)
     if (d == v) return res;
 
     //  This would be the right code with a C99 compiler that supports %a readback in strod()
-    //    return CPLString().Printf("%a",d);
+    //    return CPLOPrintf("%a",d);
 
     return CPLString().FormatC(d, frmt);
 }
 
-static void XMLSetAttributeVal(CPLXMLNode *parent, const char* pszName,
-    const char *val)
+void XMLSetAttributeVal(CPLXMLNode *parent, const char* pszName, const char *pszVal)
 {
     CPLCreateXMLNode(parent, CXT_Attribute, pszName);
-    CPLSetXMLValue(parent, pszName, val);
+    CPLSetXMLValue(parent, pszName, pszVal);
 }
 
 void XMLSetAttributeVal(CPLXMLNode *parent, const char* pszName,
     const double val, const char *frmt)
 {
-    XMLSetAttributeVal(parent, pszName, CPLString().FormatC(val, frmt));
-
-    //  Unfortunately the %a doesn't work in VisualStudio scanf or strtod
-    //    if (strtod(sVal.c_str(),0) != val)
-    //  sVal.Printf("%a",val);
+    XMLSetAttributeVal(parent, pszName, PrintDouble(val, frmt));
 }
 
 CPLXMLNode *XMLSetAttributeVal(CPLXMLNode *parent,
@@ -506,14 +499,7 @@ int CheckFileSize(const char *fname, GIntBig sz, GDALAccess eAccess) {
     if( ifp == nullptr )
         return false;
 
-// There is no VSIFTruncateL in gdal 1.8 and lower, seek and write something at the end
-#if GDAL_VERSION_MAJOR == 1 && GDAL_VERSION_MINOR <= 8
-    int zero = 0;
-    VSIFSeekL(ifp, sz - sizeof(zero), SEEK_SET);
-    int ret = (sizeof(zero) == VSIFWriteL(&zero, sizeof(zero), 1,ifp));
-#else
     int ret = VSIFTruncateL(ifp, sz);
-#endif
     VSIFCloseL(ifp);
     return !ret;
 }
@@ -589,7 +575,6 @@ NAMESPACE_MRF_END
 USING_NAMESPACE_MRF
 
 void GDALRegister_mrf()
-
 {
     if( GDALGetDriverByName("MRF") != nullptr )
         return;
@@ -600,10 +585,7 @@ void GDALRegister_mrf()
     driver->SetMetadataItem(GDAL_DMD_HELPTOPIC, "drivers/raster/marfa.html");
     driver->SetMetadataItem(GDAL_DMD_EXTENSION, "mrf");
     driver->SetMetadataItem(GDAL_DCAP_VIRTUALIO, "YES");
-
-#if GDAL_VERSION_MAJOR >= 2
     driver->SetMetadataItem(GDAL_DCAP_RASTER, "YES");
-#endif
 
     // These will need to be revisited, do we support complex data types too?
     driver->SetMetadataItem(GDAL_DMD_CREATIONDATATYPES,

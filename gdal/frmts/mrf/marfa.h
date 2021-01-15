@@ -245,6 +245,8 @@ double logbase(double val, double base);
 int IsPower(double value, double base);
 CPLXMLNode *SearchXMLSiblings(CPLXMLNode *psRoot, const char *pszElement);
 CPLString PrintDouble(double d, const char *frmt = "%12.8f");
+
+void XMLSetAttributeVal(CPLXMLNode* parent, const char* pszName, const char* pszValue);
 void XMLSetAttributeVal(CPLXMLNode *parent, const char* pszName,
     const double val, const char *frmt = "%12.8f");
 CPLXMLNode *XMLSetAttributeVal(CPLXMLNode *parent,
@@ -416,15 +418,9 @@ protected:
         return pbuffer;
     }
 
-#if GDAL_VERSION_MAJOR >= 2
     virtual CPLErr IRasterIO(GDALRWFlag, int, int, int, int,
         void *, int, int, GDALDataType,
         int, int *, GSpacing, GSpacing, GSpacing, GDALRasterIOExtraArg*) override;
-#else
-    virtual CPLErr IRasterIO(GDALRWFlag, int, int, int, int,
-        void *, int, int, GDALDataType,
-        int, int *, int, int, int);
-#endif
 
     virtual CPLErr IBuildOverviews(const char*, int, int*, int, int*,
         GDALProgressFunc, void*) override;

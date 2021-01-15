@@ -20,7 +20,7 @@
 * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-* Copyright 2014-2015 Esri
+* Copyright 2014-2021 Esri
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -39,22 +39,18 @@
  * TIFF band
  * TIFF page compression and decompression functions
  *
- * Author:  Lucian Plesea, lplesea@esri.com
+ * Author:  Lucian Plesea, lplesea at esri.com
  *
  */
 
 #include "marfa.h"
 
-CPL_CVSID("$Id$")
-
 NAMESPACE_MRF_START
 
 // Returns a string in /vsimem/ + prefix + count that doesn't exist when this function gets called
 // It is not thread safe, open the result as soon as possible
-static CPLString uniq_memfname(const char *prefix)
-{
-
-// Define MRF_LOCAL_TMP to use local files instead of RAM
+static CPLString uniq_memfname(const char *prefix) {
+// Define MRF_LOCAL_TMP to use local files instead of RAM, for debugging only
 // #define MRF_LOCAL_TMP
 #if defined(MRF_LOCAL_TMP)
     return CPLGenerateTempFilename(prefix);
@@ -62,8 +58,9 @@ static CPLString uniq_memfname(const char *prefix)
     CPLString fname;
     VSIStatBufL statb;
     static unsigned int cnt=0;
-    do fname.Printf("/vsimem/%s_%08x",prefix, cnt++);
-    while (!VSIStatL(fname, &statb));
+    do {
+        fname.Printf("/vsimem/%s_%08x", prefix, cnt++);
+    } while (!VSIStatL(fname, &statb));
     return fname;
 #endif
 }
@@ -81,6 +78,8 @@ static CPLErr CompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img, char *
 
     GDALDataset *poTiff = poTiffDriver->Create(fname, img.pagesize.x, img.pagesize.y,
                                                img.pagesize.c, img.dt, papszOptions );
+    if (poTiff == nullptr)
+        return CE_Failure;
 
     // Write directly to avoid double caching in GDAL
     // Unfortunately not possible for multiple bands
@@ -89,18 +88,14 @@ static CPLErr CompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img, char *
     } else {
         ret = poTiff->RasterIO(GF_Write, 0,0,img.pagesize.x,img.pagesize.y,
             src.buffer, img.pagesize.x, img.pagesize.y, img.dt, img.pagesize.c,
-            nullptr, 0,0,0
-#if GDAL_VERSION_MAJOR >= 2
-            ,nullptr
-#endif
-            );
+            nullptr, 0, 0, 0 , nullptr);
     }
-    if (CE_None != ret) return ret;
     GDALClose(poTiff);
+    if (CE_None != ret)
+        return ret;
 
     // Check that we can read the file
-    if (VSIStatL(fname, &statb))
-    {
+    if (VSIStatL(fname, &statb)) {
         CPLError(CE_Failure,CPLE_AppDefined,
             "MRF: TIFF, can't stat %s", fname.c_str());
         return CE_Failure;
@@ -129,25 +124,21 @@ static CPLErr CompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img, char *
     return CE_None;
 }
 
-// Read from a RAM Tiff. This is rather generic
+// Read from a RAM Tiff. This is generic, would work for any other formats
 static CPLErr DecompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img)
 {
     CPLString fname = uniq_memfname("mrf_tif_read");
     VSILFILE *fp = VSIFileFromMemBuffer(fname, (GByte *)(src.buffer), src.size, false);
     // Comes back opened, but we can't use it
-    if (fp)
-        VSIFCloseL(fp);
-    else {
-        CPLError(CE_Failure,CPLE_AppDefined,
+    if (fp == nullptr) {
+        CPLError(CE_Failure, CPLE_AppDefined,
             "MRF: TIFF, can't open %s as a temp file", fname.c_str());
         return CE_Failure;
     }
-#if GDAL_VERSION_MAJOR >= 2
+    VSIFCloseL(fp);
+
     const char* const apszAllowedDrivers[] = { "GTiff", nullptr };
     GDALDataset *poTiff = reinterpret_cast<GDALDataset*>(GDALOpenEx(fname, GDAL_OF_RASTER, apszAllowedDrivers, nullptr, nullptr));
-#else
-    GDALDataset *poTiff = reinterpret_cast<GDALDataset*>(GDALOpen(fname, GA_ReadOnly));
-#endif
     if (poTiff == nullptr || !poTiff->GetRasterCount()) {
         CPLError(CE_Failure,CPLE_AppDefined,
             "MRF: Can't open page as a raster Tiff");
@@ -166,7 +157,7 @@ static CPLErr DecompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img)
         static_cast<size_t>(img.pagesize.x) * img.pagesize.y * nDTSize * img.pagesize.c != dst.size )
     {
         CPLError(CE_Failure,CPLE_AppDefined,
-            "MRF: TIFF inconsistent with MRF parameters");
+            "MRF: TIFF tile inconsistent with MRF parameters");
         GDALClose(poTiff);
         VSIUnlink(fname);
         return CE_Failure;
@@ -200,11 +191,7 @@ static CPLErr DecompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img)
                     img.dt, img.pagesize.c, nullptr,
                     nDTSize * img.pagesize.c,
                     nDTSize * img.pagesize.c * img.pagesize.x,
-                    nDTSize
-#if GDAL_VERSION_MAJOR >= 2
-                    , nullptr
-#endif
-        );
+                    nDTSize, nullptr);
     }
     GDALClose(poTiff);
     VSIUnlink(fname);
@@ -212,13 +199,11 @@ static CPLErr DecompressTIF(buf_mgr &dst, buf_mgr &src, const ILImage &img)
     return ret;
 }
 
-CPLErr TIF_Band::Decompress(buf_mgr &dst, buf_mgr &src)
-{
+CPLErr TIF_Band::Decompress(buf_mgr &dst, buf_mgr &src) {
     return DecompressTIF(dst, src, img);
 }
 
-CPLErr TIF_Band::Compress(buf_mgr &dst, buf_mgr &src)
-{
+CPLErr TIF_Band::Compress(buf_mgr &dst, buf_mgr &src) {
     return CompressTIF(dst,src,img, papszOptions);
 }
 
@@ -232,20 +217,16 @@ TIF_Band::TIF_Band( MRFDataset *pDS, const ILImage &image,
     // Static create options for TIFF tiles
     papszOptions = CSLAddNameValue(nullptr, "COMPRESS", "DEFLATE");
     papszOptions = CSLAddNameValue(papszOptions, "TILED", "Yes");
-    papszOptions = CSLAddNameValue(papszOptions, "BLOCKXSIZE",
-                                   CPLString().Printf("%d",img.pagesize.x));
-    papszOptions = CSLAddNameValue(papszOptions, "BLOCKYSIZE",
-                                   CPLString().Printf("%d",img.pagesize.y));
+    papszOptions = CSLAddNameValue(papszOptions, "BLOCKXSIZE", CPLOPrintf("%d", img.pagesize.x));
+    papszOptions = CSLAddNameValue(papszOptions, "BLOCKYSIZE", CPLOPrintf("%d", img.pagesize.y));
     int q = img.quality / 10;
     // Move down so the default 85 maps to 6.  This makes the maz
     // ZLEVEL 8, which is OK.
     if (q >2) q-=2;
-    papszOptions = CSLAddNameValue(papszOptions, "ZLEVEL",
-                                   CPLString().Printf("%d", q));
+    papszOptions = CSLAddNameValue(papszOptions, "ZLEVEL", CPLOPrintf("%d", q));
 }
 
-TIF_Band::~TIF_Band()
-{
+TIF_Band::~TIF_Band() {
     CSLDestroy(papszOptions);
 }
 

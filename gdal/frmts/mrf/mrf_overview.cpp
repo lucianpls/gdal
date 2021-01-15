@@ -1,5 +1,5 @@
 /*
-* Copyright 2014-2015 Esri
+* Copyright 2014-2021 Esri
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
 * You may obtain a copy of the License at
@@ -18,7 +18,7 @@
 * Project:  Meta Raster File Format Driver Implementation, overlay support
 * Purpose:  Implementation overlay support for MRF
 *
-* Author:   Lucian Plesea, Lucian.Plesea@jpl.nasa.gov, lplesea@esri.com
+* Author:   Lucian Plesea, Lucian.Plesea at jpl.nasa.gov, lplesea at esri.com
 *
 ******************************************************************************
 *  This source file contains the non GDAL standard part of the MRF overview building
@@ -27,8 +27,6 @@
 
 #include "marfa.h"
 #include <vector>
-
-CPL_CVSID("$Id$")
 
 using std::vector;
 
@@ -357,13 +355,8 @@ CPLErr MRFDataset::PatchOverview(int BlockX,int BlockY,
                     sz_x, sz_y, // Size in output image
                     buffer, sz_x, sz_y, // Buffer and size in buffer
                     eDataType, // Requested type
-                    pixel_size, 2 * line_size
-#if GDAL_VERSION_MAJOR >= 2
-                    ,nullptr
-#endif
-                    ); // Pixel and line space
-                if( eErr != CE_None )
-                {
+                    pixel_size, 2 * line_size, nullptr);
+                if( eErr != CE_None ) {
                     // TODO ?
                     CPLError(CE_Failure, CPLE_AppDefined, "RasterIO() failed");
                 }
@@ -441,14 +434,8 @@ CPLErr MRFDataset::PatchOverview(int BlockX,int BlockY,
                     sz_x, sz_y, // Size in output image
                     buffer, sz_x, sz_y, // Buffer and size in buffer
                     eDataType, // Requested type
-                    pixel_size, line_size
-#if GDAL_VERSION_MAJOR >= 2
-                    ,nullptr
-#endif
-                ); // Pixel and line space
-
-                if( eErr != CE_None )
-                {
+                    pixel_size, line_size, nullptr);
+                if( eErr != CE_None ) {
                     // TODO ?
                     CPLError(CE_Failure, CPLE_AppDefined, "RasterIO() failed");
                 }

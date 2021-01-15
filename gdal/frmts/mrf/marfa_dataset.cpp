@@ -18,7 +18,7 @@
 * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 *
-* Portions copyright 2014-2017 Esri
+* Portions copyright 2014-2021 Esri
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@
 * Project:  Meta Raster File Format Driver Implementation, Dataset
 * Purpose:  Implementation of GDAL dataset
 *
-* Author:   Lucian Plesea, Lucian.Plesea@jpl.nasa.gov, lplesea@esri.com
+* Author:   Lucian Plesea, Lucian.Plesea at jpl.nasa.gov, lplesea at esri.com
 *
 ******************************************************************************
 *
@@ -56,18 +56,10 @@
 #include <algorithm>
 #include <vector>
 
-CPL_CVSID("$Id$")
-
 using std::vector;
 using std::string;
 
 NAMESPACE_MRF_START
-
-#if GDAL_VERSION_MAJOR >= 2
-#define BOOLTEST CPLTestBool
-#else
-#define BOOLTEST CSLTestBoolean
-#endif
 
 // Initialize as invalid
 MRFDataset::MRFDataset() :
@@ -75,7 +67,7 @@ MRFDataset::MRFDataset() :
     idxSize(0),
     clonedSource(FALSE),
     nocopy(FALSE),
-    bypass_cache(BOOLTEST(CPLGetConfigOption("MRF_BYPASSCACHING", "FALSE"))),
+    bypass_cache(CPLTestBool(CPLGetConfigOption("MRF_BYPASSCACHING", "FALSE"))),
     mp_safe(FALSE),
     hasVersions(FALSE),
     verCount(0),
@@ -170,40 +162,16 @@ MRFDataset::~MRFDataset()
     pbsize = 0;
 }
 
-#ifdef unused
-/*
- *\brief Called before the IRaster IO gets called
- *
- *
- *
- */
-CPLErr GDALMRFDataset::AdviseRead(int nXOff, int nYOff, int nXSize, int nYSize,
-    int nBufXSize, int nBufYSize,
-    GDALDataType eDT,
-    int nBandCount, int *panBandList,
-    char **papszOptions)
-{
-    CPLDebug("MRF_IO", "AdviseRead %d, %d, %d, %d, bufsz %d,%d,%d\n",
-        nXOff, nYOff, nXSize, nYSize, nBufXSize, nBufYSize, nBandCount);
-    return CE_None;
-}
-#endif
-
 /*
  *\brief Format specific RasterIO, may be bypassed by BlockBasedRasterIO by setting
  * GDAL_FORCE_CACHING to Yes, in which case the band ReadBlock and WriteBLock are called
  * directly
  *
- *
  */
 CPLErr MRFDataset::IRasterIO(GDALRWFlag eRWFlag, int nXOff, int nYOff, int nXSize, int nYSize,
     void *pData, int nBufXSize, int nBufYSize, GDALDataType eBufType,
     int nBandCount, int *panBandMap,
-#if GDAL_VERSION_MAJOR >= 2
     GSpacing nPixelSpace, GSpacing nLineSpace, GSpacing nBandSpace, GDALRasterIOExtraArg* psExtraArgs
-#else
-    int nPixelSpace, int nLineSpace, int nBandSpace
-#endif
     )
 {
     CPLDebug("MRF_IO", "IRasterIO %s, %d, %d, %d, %d, bufsz %d,%d,%d strides P %d, L %d, B %d \n",
@@ -222,11 +190,7 @@ CPLErr MRFDataset::IRasterIO(GDALRWFlag eRWFlag, int nXOff, int nYOff, int nXSiz
     // Call the parent implementation, which splits it into bands and calls their IRasterIO
     //
     return GDALPamDataset::IRasterIO(eRWFlag, nXOff, nYOff, nXSize, nYSize, pData, nBufXSize, nBufYSize,
-        eBufType, nBandCount, panBandMap, nPixelSpace, nLineSpace, nBandSpace
-#if GDAL_VERSION_MAJOR >= 2
-        ,psExtraArgs
-#endif
-        );
+        eBufType, nBandCount, panBandMap, nPixelSpace, nLineSpace, nBandSpace ,psExtraArgs);
 }
 
 /**
@@ -307,7 +271,7 @@ CPLErr MRFDataset::IBuildOverviews(
 
                 // The scale value is the same as first overview
                 scale = strtod(CPLGetXMLValue(config, "Rsets.scale",
-                    CPLString().Printf("%d", panOverviewList[0]).c_str()), nullptr);
+                    CPLOPrintf("%d", panOverviewList[0]).c_str()), nullptr);
 
                 if (static_cast<int>(scale) != 2 &&
                     (EQUALN("Avg", pszResampling, 3) || EQUALN("Nnb", pszResampling, 3))) {
@@ -325,7 +289,7 @@ CPLErr MRFDataset::IBuildOverviews(
 
                 //  Set the uniform node, in case it was not set before, and save the new configuration
                 CPLSetXMLValue(config, "Rsets.#model", "uniform");
-                CPLSetXMLValue(config, "Rsets.#scale", CPLString().Printf("%g", scale).c_str());
+                CPLSetXMLValue(config, "Rsets.#scale", PrintDouble(scale));
 
                 if (!WriteConfig(config)) {
                     CPLError(CE_Failure, CPLE_AppDefined, "MRF: Can't rewrite the metadata file");
@@ -344,8 +308,7 @@ CPLErr MRFDataset::IBuildOverviews(
             // and starting with the lowest one
             if( !EQUAL(pszResampling, "NONE") &&
                 nOverviews != GetRasterBand(1)->GetOverviewCount() &&
-                BOOLTEST(CPLGetConfigOption("MRF_ALL_OVERVIEW_LEVELS",
-                                               "YES")) )
+                CPLTestBool(CPLGetConfigOption("MRF_ALL_OVERVIEW_LEVELS", "YES")) )
             {
                 bool bIncreasingPowers = (panOverviewList[0] == static_cast<int>(scale));
                 for (int i = 1; i < nOverviews; i++)
@@ -1244,8 +1207,7 @@ CPLXMLNode * MRFDataset::BuildConfig()
         (full.nbo || NET_ORDER) ? "TRUE" : "FALSE");
 
     if (full.quality > 0 && full.quality != 85)
-        CPLCreateXMLElementAndValue(raster, "Quality",
-            CPLString().Printf("%d", full.quality));
+        CPLCreateXMLElementAndValue(raster, "Quality", CPLOPrintf("%d", full.quality));
 
     // Done with the raster node
 
@@ -1359,8 +1321,8 @@ CPLErr MRFDataset::Initialize(CPLXMLNode *config)
     // Copy the full size to current, data and index are not yet open
     current = full;
     if (current.size.z != 1) {
-        SetMetadataItem("ZSIZE", CPLString().Printf("%d", current.size.z), "IMAGE_STRUCTURE");
-        SetMetadataItem("ZSLICE", CPLString().Printf("%d", zslice), "IMAGE_STRUCTURE");
+        SetMetadataItem("ZSIZE", CPLOPrintf("%d", current.size.z), "IMAGE_STRUCTURE");
+        SetMetadataItem("ZSLICE", CPLOPrintf("%d", zslice), "IMAGE_STRUCTURE");
         // Capture the zslice in pagesize.l
         current.pagesize.l = zslice;
         // Adjust offset for base image
@@ -1628,7 +1590,7 @@ GDALDataset *MRFDataset::CreateCopy(const char *pszFilename,
             Create(pszFilename, x, y, nBands, dt, options));
 
         if (poDS == nullptr || poDS->bCrystalized)
-            throw CPLString().Printf("MRF: Can't create %s",pszFilename);
+            throw CPLOPrintf("MRF: Can't create %s",pszFilename);
 
         img = poDS->current; // Deal with the current one here
 

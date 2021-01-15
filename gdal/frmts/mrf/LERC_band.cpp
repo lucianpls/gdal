@@ -1,5 +1,5 @@
 /*
-Copyright 2013-2020 Esri
+Copyright 2013-2021 Esri
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -16,7 +16,7 @@ http://github.com/Esri/lerc/
 LERC band implementation
 LERC page compression and decompression functions
 
-Contributors:  Lucian Plesea
+Author: Lucian Plesea
 */
 
 #include "marfa.h"
@@ -521,6 +521,8 @@ CPLXMLNode *LERC_Band::GetMRFConfig(GDALOpenInfo *poOpenInfo)
     if (size.x <=0 || size.y <=0 || dt == GDT_Unknown)
         return nullptr;
 
+    // Maybe the openoption specifies an NDV string
+
     // Build and return the MRF configuration for a single tile reader
     CPLXMLNode *config = CPLCreateXMLNode(nullptr, CXT_Element, "MRF_META");
     CPLXMLNode *raster = CPLCreateXMLNode(config, CXT_Element, "Raster");
@@ -531,6 +533,11 @@ CPLXMLNode *LERC_Band::GetMRFConfig(GDALOpenInfo *poOpenInfo)
     CPLCreateXMLElementAndValue(raster, "DataFile", poOpenInfo->pszFilename);
     // Set a magic index file name to prevent the driver from attempting to open it
     CPLCreateXMLElementAndValue(raster, "IndexFile", "(null)");
+    const char* pszNDV = CSLFetchNameValueDef(poOpenInfo->papszOpenOptions, "NDV", "");
+    if (strlen(pszNDV) > 0) {
+        CPLXMLNode* values = CPLCreateXMLNode(raster, CXT_Element, "DataValues");
+        XMLSetAttributeVal(values, "NoData", pszNDV);
+    }
 
     return config;
 }
