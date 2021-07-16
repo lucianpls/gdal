@@ -54,7 +54,7 @@ RUN if test "${SZIP_VERSION}" != ""; then ( \
 
 # Build hdf4
 ARG HDF4_VERSION=4.2.15
-RUN if test "${HDF4_VERSION}" != ""; then ( \
+RUN if test "${HDF4_VERSION}" != "" -a "$(uname -m)" = "x86_64"; then ( \
     apk add --no-cache byacc flex portablexdr-dev \
     && mkdir hdf4 \
     && wget -q https://support.hdfgroup.org/ftp/HDF/releases/HDF${HDF4_VERSION}/src/hdf-${HDF4_VERSION}.tar.gz -O - \
@@ -138,10 +138,11 @@ RUN mkdir proj \
     && ./autogen.sh \
     && if test "${RSYNC_REMOTE}" != ""; then \
         echo "Downloading cache..."; \
-        rsync -ra ${RSYNC_REMOTE}/proj/ $HOME/; \
+        rsync -ra ${RSYNC_REMOTE}/proj/$(uname -m)/ $HOME/; \
         echo "Finished"; \
         export CC="ccache gcc"; \
         export CXX="ccache g++"; \
+        mkdir -p "$HOME/.ccache"; \
         export PROJ_DB_CACHE_DIR="$HOME/.ccache"; \
         ccache -M 100M; \
     fi \
@@ -152,7 +153,7 @@ RUN mkdir proj \
     && if test "${RSYNC_REMOTE}" != ""; then \
         ccache -s; \
         echo "Uploading cache..."; \
-        rsync -ra --delete $HOME/.ccache ${RSYNC_REMOTE}/proj/; \
+        rsync -ra --delete $HOME/.ccache ${RSYNC_REMOTE}/proj/$(uname -m)/; \
         echo "Finished"; \
         rm -rf $HOME/.ccache; \
         unset CC; \
@@ -165,7 +166,7 @@ RUN mkdir proj \
 
 # Build spatialite
 ARG SPATIALITE_VERSION=5.0.1
-RUN if test "${SPATIALITE_VERSION}" != ""; then ( \
+RUN if test "${SPATIALITE_VERSION}" != "" -a "$(uname -m)" = "x86_64"; then ( \
     wget -q http://www.gaia-gis.it/gaia-sins/libspatialite-${SPATIALITE_VERSION}.tar.gz \
     && tar xzf libspatialite-${SPATIALITE_VERSION}.tar.gz \
     && rm -f libspatialite-${SPATIALITE_VERSION}.tar.gz \
@@ -177,6 +178,7 @@ RUN if test "${SPATIALITE_VERSION}" != ""; then ( \
         echo "Finished"; \
         export CC="ccache gcc"; \
         export CXX="ccache g++"; \
+        mkdir -p "$HOME/.ccache"; \
         ccache -M 100M; \
     fi \
     && ./configure --prefix=/usr --disable-static --disable-rttopo \
@@ -218,14 +220,14 @@ RUN if test "${GDAL_VERSION}" = "master"; then \
     && if test "${XERCESC_VERSION}" != ""; then \
         export GDAL_EXTRA_ARGS="--with-xerces ${GDAL_EXTRA_ARGS}"; \
     fi \
-    && if test "${HDF4_VERSION}" != ""; then \
+    && if test "${HDF4_VERSION}" != "" -a "$(uname -m)" = "x86_64"; then \
         apk add --no-cache portablexdr-dev \
         && export LDFLAGS="-lportablexdr ${LDFLAGS}" \
         && export GDAL_EXTRA_ARGS="--with-hdf4 ${GDAL_EXTRA_ARGS}"; \
     fi \
     && export GDAL_EXTRA_ARGS="--with-hdf5 ${GDAL_EXTRA_ARGS}" \
     && export GDAL_EXTRA_ARGS="--with-netcdf ${GDAL_EXTRA_ARGS}" \
-    && if test "${SPATIALITE_VERSION}" != ""; then \
+    && if test "${SPATIALITE_VERSION}" != "" -a "$(uname -m)" = "x86_64"; then \
         export GDAL_EXTRA_ARGS="--with-spatialite ${GDAL_EXTRA_ARGS}"; \
     fi \
     && if test "${POPPLER_DEV}" != ""; then \
@@ -238,7 +240,7 @@ RUN if test "${GDAL_VERSION}" = "master"; then \
     && cd gdal/gdal \
     && if test "${RSYNC_REMOTE}" != ""; then \
         echo "Downloading cache..."; \
-        rsync -ra ${RSYNC_REMOTE}/gdal/ $HOME/; \
+        rsync -ra ${RSYNC_REMOTE}/gdal/$(uname -m)/ $HOME/; \
         echo "Finished"; \
         # Little trick to avoid issues with Python bindings
         printf "#!/bin/sh\nccache gcc \$*" > ccache_gcc.sh; \
@@ -247,6 +249,7 @@ RUN if test "${GDAL_VERSION}" = "master"; then \
         chmod +x ccache_g++.sh; \
         export CC=$PWD/ccache_gcc.sh; \
         export CXX=$PWD/ccache_g++.sh; \
+        mkdir -p "$HOME/.ccache"; \
         ccache -M 1G; \
     fi \
     && ./configure --prefix=/usr --without-libtool \
@@ -264,7 +267,7 @@ RUN if test "${GDAL_VERSION}" = "master"; then \
     && if test "${RSYNC_REMOTE}" != ""; then \
         ccache -s; \
         echo "Uploading cache..."; \
-        rsync -ra --delete $HOME/.ccache ${RSYNC_REMOTE}/gdal/; \
+        rsync -ra --delete $HOME/.ccache ${RSYNC_REMOTE}/gdal/$(uname -m)/; \
         echo "Finished"; \
         rm -rf $HOME/.ccache; \
         unset CC; \

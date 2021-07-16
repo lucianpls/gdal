@@ -1331,6 +1331,20 @@ def test_osr_basic_25():
     assert sr2 is None
 
 ###############################################################################
+# EPSG 4979, but overridden to be in Feet.
+
+
+def test_osr_basic_26():
+
+    srs = osr.SpatialReference()
+
+    srs.ImportFromEPSG(4979)
+
+    srs.SetLinearUnits('Foot', 0.3048)
+
+    assert srs.GetLinearUnits() == 0.3048
+
+###############################################################################
 # Test corner cases of osr.SetGeocCS()
 
 
@@ -1710,6 +1724,10 @@ def test_osr_basic_is_dynamic():
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(4326) # WGS84 (generic), using datum ensemble
     assert srs.IsDynamic()
+
+    srs = osr.SpatialReference()
+    srs.SetFromUserInput("+proj=longlat +ellps=GRS80 +towgs84=0,0,0")
+    assert not srs.IsDynamic()
 
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(4258) # ETRS89 (generic), using datum ensemble

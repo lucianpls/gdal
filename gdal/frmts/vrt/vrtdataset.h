@@ -41,6 +41,7 @@
 #include "gdal_vrt.h"
 #include "gdal_rat.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -761,6 +762,8 @@ class CPL_DLL VRTDerivedRasterBand CPL_NON_FINAL: public VRTSourcedRasterBand
     char *pszFuncName;
     GDALDataType eSourceTransferType;
 
+    using PixelFunc = std::function<CPLErr(void**, int, void*, int, int, GDALDataType, GDALDataType, int, int, CSLConstList)>;
+
     VRTDerivedRasterBand( GDALDataset *poDS, int nBand );
     VRTDerivedRasterBand( GDALDataset *poDS, int nBand,
                           GDALDataType eType, int nXSize, int nYSize );
@@ -778,7 +781,11 @@ class CPL_DLL VRTDerivedRasterBand CPL_NON_FINAL: public VRTSourcedRasterBand
 
     static CPLErr AddPixelFunction( const char *pszFuncName,
                                     GDALDerivedPixelFunc pfnPixelFunc );
-    static GDALDerivedPixelFunc GetPixelFunction( const char *pszFuncName );
+    static CPLErr AddPixelFunction( const char *pszFuncName,
+                                    GDALDerivedPixelFuncWithArgs pfnPixelFunc,
+                                    const char *pszMetadata);
+
+    static PixelFunc* GetPixelFunction( const char *pszFuncName );
 
     void SetPixelFunctionName( const char *pszFuncName );
     void SetSourceTransferType( GDALDataType eDataType );
@@ -941,7 +948,8 @@ public:
     const CPLString& GetResampling() const { return m_osResampling; }
     void           SetResampling( const char* pszResampling );
 
-    int            GetSrcDstWindow( int, int, int, int, int, int,
+    int            GetSrcDstWindow( double, double, double, double,
+                                    int, int,
                                     double *pdfReqXOff, double *pdfReqYOff,
                                     double *pdfReqXSize, double *pdfReqYSize,
                                     int *, int *, int *, int *,

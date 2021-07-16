@@ -267,13 +267,13 @@ The allowed subelements for VRTRasterBand are :
     <Category>Soybeans</Category>
   </CategoryNames>
 
-- **SimpleSource**: The SimpleSource_ indicates that raster data should be read from a separate dataset, indicating the dataset, and band to be read from, and how the data should map into this bands raster space.
+- **SimpleSource**: The SimpleSource_ indicates that raster data should be read from a separate dataset, indicating the dataset, and band to be read from, and how the data should map into this band's raster space.
 
 - **AveragedSource**: The AveragedSource is derived from the SimpleSource and shares the same properties except that it uses an averaging resampling instead of a nearest neighbour algorithm as in SimpleSource, when the size of the destination rectangle is not the same as the size of the source rectangle. Note: a more general mechanism to specify resampling algorithms can be used. See above paragraph about the 'resampling' attribute.
 
-- **ComplexSource**: The ComplexSource_ is derived from the SimpleSource (so it shares the SourceFilename, SourceBand, SrcRect and DestRect elements), but it provides support to rescale and offset the range of the source values. Certain regions of the source can be masked by specifying the NODATA value, or starting with GDAL 3.3, with the <UseMaskBand>true</UseMaskBand> element.
+- **ComplexSource**: The ComplexSource_ is derived from the SimpleSource (so it shares the SourceFilename, SourceBand, SrcRect and DstRect elements), but it provides support to rescale and offset the range of the source values. Certain regions of the source can be masked by specifying the NODATA value, or starting with GDAL 3.3, with the <UseMaskBand>true</UseMaskBand> element.
 
-- **KernelFilteredSource**: The KernelFilteredSource_ is a pixel source derived from the Simple Source (so it shares the SourceFilename, SourceBand, SrcRect and DestRect elements, but it also passes the data through a simple filtering kernel specified with the Kernel element.
+- **KernelFilteredSource**: The KernelFilteredSource_ is a pixel source derived from the Simple Source (so it shares the SourceFilename, SourceBand, SrcRect and DstRect elements, but it also passes the data through a simple filtering kernel specified with the Kernel element.
 
 - **MaskBand**: This element represents a mask band that is specific to the VRTRasterBand it contains. It must contain a single VRTRasterBand child element, that is the description of the mask band itself.
 
@@ -293,7 +293,7 @@ filename should be interpreted as relative to the .vrt file (value is 1)
 or not relative to the .vrt file (value is 0).  The default is 0.
 
 Some characteristics of the source band can be specified in the optional
-SourceProperties tag to enable the VRT driver to differ the opening of the source
+SourceProperties tag to enable the VRT driver to defer the opening of the source
 dataset until it really needs to read data from it. This is particularly useful
 when building VRTs with a big number of source datasets. The needed parameters are the
 raster dimensions, the size of the blocks and the data type. If the SourceProperties
@@ -720,11 +720,11 @@ registered with GDAL using a unique key.
 Using derived bands you can create VRT datasets that manipulate bands on
 the fly without having to create new band files on disk.  For example, you
 might want to generate a band using four source bands from a nine band input
-dataset (x0, x3, x4, and x8):
+dataset (x0, x3, x4, and x8) and some constant y:
 
 .. code-block:: c
 
-  band_value = sqrt((x3*x3+x4*x4)/(x0*x8));
+  band_value = sqrt((x3*x3+x4*x4)/(x0*x8)) + y;
 
 You could write the pixel function to compute this value and then register
 it with GDAL with the name "MyFirstFunction".  Then, the following VRT XML
@@ -737,6 +737,7 @@ could be used to display this derived band:
         <VRTRasterBand dataType="Float32" band="1" subClass="VRTDerivedRasterBand">
             <Description>Magnitude</Description>
             <PixelFunctionType>MyFirstFunction</PixelFunctionType>
+            <PixelFunctionArguments y="4" />
             <SimpleSource>
                 <SourceFilename relativeToVRT="1">nine_band.dat</SourceFilename>
                 <SourceBand>1</SourceBand>
@@ -764,6 +765,11 @@ could be used to display this derived band:
         </VRTRasterBand>
     </VRTDataset>
 
+.. note::
+
+    PixelFunctionArguments can only be used with C++ pixel functions in GDAL versions 3.4 and greater.
+
+
 In addition to the subclass specification (VRTDerivedRasterBand) and
 the PixelFunctionType value, there is another new parameter that can come
 in handy: SourceTransferType.  Typically the source rasters are obtained
@@ -788,44 +794,116 @@ calling the pixel function, and the imaginary portion would be lost.
 Default Pixel Functions
 +++++++++++++++++++++++
 
-Starting with GDAL 2.2, GDAL provides a set of default pixel functions that can be used without writing new code:
+GDAL provides a set of default pixel functions that can be used without writing new code:
 
-- **real**: extract real part from a single raster band (just a copy if the input is non-complex)
-- **imag**: extract imaginary part from a single raster band (0 for non-complex)
-- **complex**: make a complex band merging two bands used as real and imag values
-- **mod**: extract module from a single raster band (real or complex)
-- **phase**: extract phase from a single raster band [-PI,PI] (0 or PI for non-complex)
-- **conj**: computes the complex conjugate of a single raster band (just a copy if the input is non-complex)
-- **sum**: sum 2 or more raster bands
-- **diff**: computes the difference between 2 raster bands (b1 - b2)
-- **mul**: multiply 2 or more raster bands
-- **cmul**: multiply the first band for the complex conjugate of the second
-- **inv**: inverse (1./x). Note: no check is performed on zero division
-- **intensity**: computes the intensity Re(x*conj(x)) of a single raster band (real or complex)
-- **sqrt**:perform the square root of a single raster band (real only)
-- **log10**: compute the logarithm (base 10) of the abs of a single raster band (real or complex): log10( abs( x ) )
-- **dB**: perform conversion to dB of the abs of a single raster band (real or complex): 20. * log10( abs( x ) )
-- **dB2amp**: perform scale conversion from logarithmic to linear (amplitude) (i.e. 10 ^ ( x / 20 ) ) of a single raster band (real only)
-- **dB2pow**: perform scale conversion from logarithmic to linear (power) (i.e. 10 ^ ( x / 10 ) ) of a single raster band (real only)
+
+.. list-table::
+   :widths: 15 10 20 55
+   :header-rows: 1
+
+   * - PixelFunctionType
+     - Number of input sources
+     - PixelFunctionArguments
+     - Description
+   * - **cmul**
+     - 2
+     - -
+     - multiply the first band for the complex conjugate of the second
+   * - **complex**
+     - 2
+     - -
+     - make a complex band merging two bands used as real and imag values
+   * - **conj**
+     - 1
+     - -
+     - computes the complex conjugate of a single raster band (just a copy if the input is non-complex)
+   * - **dB**
+     - 1
+     - -
+     - perform conversion to dB of the abs of a single raster band (real or complex): ``20. * log10( abs( x ) )``
+   * - **dB2amp**
+     - 1
+     - -
+     - perform scale conversion from logarithmic to linear (amplitude) (i.e. ``10 ^ ( x / 20 )`` ) of a single raster band (real only)
+   * - **dB2pow**
+     - 1
+     - -
+     - perform scale conversion from logarithmic to linear (power) (i.e. ``10 ^ ( x / 10 )`` ) of a single raster band (real only)
+   * - **diff**
+     - 2
+     - -
+     - computes the difference between 2 raster bands (``b1 - b2``)
+   * - **imag**
+     - 1
+     - -
+     - extract imaginary part from a single raster band (0 for non-complex)
+   * - **intensity**
+     - 1
+     - -
+     - computes the intensity ``Re(x*conj(x))`` of a single raster band (real or complex)
+   * - **interpolate_exp**
+     - >= 2
+     - ``t0``, ``dt``, ``t``
+     - interpolate a value at time (or position) ``t`` given input sources beginning at position ``t0`` with spacing ``dt`` using exponential interpolation
+   * - **interpolate_linear**
+     - >= 2
+     - ``t0``, ``dt``, ``t``
+     - interpolate a value at time (or position) ``t`` given input sources beginning at ``t0`` with spacing ``dt`` using linear interpolation
+   * - **inv**
+     - 1
+     - -
+     - inverse (1./x). Note: no check is performed on zero division
+   * - **log10**
+     - 1
+     - -
+     - compute the logarithm (base 10) of the abs of a single raster band (real or complex): ``log10( abs( x ) )``
+   * - **mod**
+     - 1
+     - -
+     - extract module from a single raster band (real or complex)
+   * - **mul**
+     - >= 2
+     - -
+     - multiply 2 or more raster bands
+   * - **phase**
+     - 1
+     - -
+     - extract phase from a single raster band [-PI,PI] (0 or PI for non-complex)
+   * - **pow**
+     - 1
+     - ``power``
+     - raise a single raster band to a constant power, specified with argument ``power`` (real only)
+   * - **real**
+     - 1
+     - -
+     - extract real part from a single raster band (just a copy if the input is non-complex)
+   * - **sqrt**
+     - 1
+     - -
+     - perform the square root of a single raster band (real only)
+   * - **sum**
+     - >= 2
+     - -
+     - sum 2 or more raster bands
 
 Writing Pixel Functions
 +++++++++++++++++++++++
 
 To register this function with GDAL (prior to accessing any VRT datasets
 with derived bands that use this function), an application calls
-GDALAddDerivedBandPixelFunc with a key and a GDALDerivedPixelFunc:
+:cpp:func:`GDALAddDerivedBandPixelFuncWithArgs` with a key and a :cpp:type:`GDALDerivedPixelFuncWithArgs`:
 
 .. code-block:: cpp
 
-    GDALAddDerivedBandPixelFunc("MyFirstFunction", TestFunction);
+    GDALAddDerivedBandPixelFunc("MyFirstFunction", TestFunction, nullptr);
 
 A good time to do this is at the beginning of an application when the
 GDAL drivers are registered.
 
-A :cpp:type:`GDALDerivedPixelFunc` is defined with a signature similar to :cpp:func:`GDALRasterBand::IRasterIO`:
+A :cpp:type:`GDALDerivedPixelFuncWithArgs` is defined with a signature similar to :cpp:func:`GDALRasterBand::IRasterIO`:
 
 
-.. cpp:function:: CPL_Err TestFunction(void** papoSources, int nSources, void* pData, int nBufXSize, int nBufYSize, GDALDataType eSrcType, GDALDataType eBufType, int nPixelSpace, int nLineSpace)
+.. cpp:function:: CPLErr TestFunction(void** papoSources, int nSources, void* pData, int nBufXSize, int nBufYSize, GDALDataType eSrcType, GDALDataType eBufType, int nPixelSpace, int nLineSpace, CSLConstList papszArgs)
 
    :param papoSources: A pointer to packed rasters; one per source.  The
     datatype of all will be the same, specified in the ``eSrcType`` parameter.
@@ -857,6 +935,11 @@ A :cpp:type:`GDALDerivedPixelFunc` is defined with a signature similar to :cpp:f
    :param nLineSpace: The byte offset from the start of one scanline in
     pData to the start of the next.
 
+   :param papszArgs: An optional string list of named function arguments (e.g. ``y=4``)
+
+
+It is also possible to register a :cpp:type:`GDALDerivedPixelFunc` (which omits the final :cpp:type:`CSLConstList` argument) using :cpp:func:`GDALAddDerivedBandPixelFunc`.
+
 The following is an implementation of the pixel function:
 
 .. code-block:: cpp
@@ -866,7 +949,8 @@ The following is an implementation of the pixel function:
     CPLErr TestFunction(void **papoSources, int nSources, void *pData,
                         int nXSize, int nYSize,
                         GDALDataType eSrcType, GDALDataType eBufType,
-                        int nPixelSpace, int nLineSpace)
+                        int nPixelSpace, int nLineSpace,
+                        CSLConstList papszArgs)
     {
         int ii, iLine, iCol;
         double pix_val;
@@ -874,6 +958,13 @@ The following is an implementation of the pixel function:
 
         // ---- Init ----
         if (nSources != 4) return CE_Failure;
+
+        const char *pszY = CSLFetchNameValue(papszArgs, "y");
+        if (pszY == nullptr) return CE_Failure;
+
+        char *end = nullptr;
+        double y = std::strtod(pszY, &end);
+        if (end == pszY) return CE_Failure; // Could not parse
 
         // ---- Set pixels ----
         for( iLine = 0; iLine < nYSize; iLine++ )
@@ -887,7 +978,7 @@ The following is an implementation of the pixel function:
                 x4 = SRCVAL(papoSources[2], eSrcType, ii);
                 x8 = SRCVAL(papoSources[3], eSrcType, ii);
 
-                pix_val = sqrt((x3*x3+x4*x4)/(x0*x8));
+                pix_val = sqrt((x3*x3+x4*x4)/(x0*x8)) + y;
 
                 GDALCopyWords(&pix_val, GDT_Float64, 0,
                             ((GByte *)pData) + nLineSpace * iLine + iCol * nPixelSpace,
@@ -913,8 +1004,6 @@ set to VRTDerivedRasterBand) are :
 - **PixelFunctionType** (required): Must be set to a function name that will be defined as a inline Python module in PixelFunctionCode element or as the form "module_name.function_name" to refer to a function in an external Python module
 
 - **PixelFunctionLanguage** (required): Must be set to Python.
-
-- **PixelFunctionArguments** (optional): It is possible to pass arguments to the Python pixel function by defining attributes in the PixelFunctionArguments element.
 
 - **PixelFunctionCode** (required if PixelFunctionType is of the form "function_name", ignored otherwise). The in-lined code of a Python module, that must be at least have a function whose name is given by PixelFunctionType.
 
