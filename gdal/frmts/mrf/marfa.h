@@ -48,15 +48,18 @@
 #ifndef GDAL_FRMTS_MRF_MARFA_H_INCLUDED
 #define GDAL_FRMTS_MRF_MARFA_H_INCLUDED
 
-#include <gdal_pam.h>
-#include <ogr_srs_api.h>
-#include <ogr_spatialref.h>
+#include "gdal_pam.h"
+#include "ogr_srs_api.h"
+#include "ogr_spatialref.h"
 
 #include <limits>
 // For printing values
 #include <ostream>
 #include <iostream>
 #include <sstream>
+#if defined(ZSTD_SUPPORT)
+#include <zstd.h>
+#endif
 
 #define NAMESPACE_MRF_START namespace GDAL_MRF {
 #define NAMESPACE_MRF_END   }
@@ -495,6 +498,20 @@ protected:
 
     // statistical values
     std::vector<double> vNoData, vMin, vMax;
+    // Sticky context for zstd compress and decompress
+    void* pzscctx, * pzsdctx;
+#if defined(ZSTD_SUPPORT)
+    ZSTD_CCtx* getzsc() {
+        if (!pzscctx)
+            pzscctx = ZSTD_createCCtx();
+        return static_cast<ZSTD_CCtx*>(pzscctx);
+    }
+    ZSTD_DCtx* getzsd() {
+        if (!pzsdctx)
+            pzsdctx = ZSTD_createDCtx();
+        return static_cast<ZSTD_DCtx *>(pzsdctx);
+    }
+#endif
 };
 
 class MRFRasterBand CPL_NON_FINAL: public GDALPamRasterBand {

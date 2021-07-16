@@ -50,12 +50,14 @@
 
 #include "marfa.h"
 #include "cpl_multiproc.h" /* for CPLSleep() */
-#include <gdal_priv.h>
+#include "gdal_priv.h"
 #include <assert.h>
 
 #include <algorithm>
 #include <vector>
-
+#if defined(ZSTD_SUPPORT)
+#include <zstd.h>
+#endif
 using std::vector;
 using std::string;
 
@@ -85,7 +87,9 @@ MRFDataset::MRFDataset() :
     bdirty(0),
     bGeoTransformValid(TRUE),
     poColorTable(nullptr),
-    Quality(0)
+    Quality(0),
+    pzscctx(nullptr),
+    pzsdctx(nullptr)
 {
     //                X0   Xx   Xy  Y0    Yx   Yy
     double gt[6] = { 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 };
@@ -163,6 +167,10 @@ MRFDataset::~MRFDataset() {   // Make sure everything gets written
     // CPLFree ignores being called with NULL
     CPLFree(pbuffer);
     pbsize = 0;
+#if defined(ZSTD_SUPPORT)
+    ZSTD_freeCCtx(static_cast<ZSTD_CCtx*>(pzscctx));
+    ZSTD_freeDCtx(static_cast<ZSTD_DCtx*>(pzsdctx));
+#endif
 }
 
 /*
