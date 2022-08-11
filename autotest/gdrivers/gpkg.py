@@ -1204,7 +1204,7 @@ def test_gpkg_15():
     # Repeated SetProjection()
     out_ds = gdal.Open('/vsimem/tmp.gpkg', gdal.GA_Update)
     assert out_ds.GetSpatialRef().IsLocal()
-    assert out_ds.GetProjectionRef().find('Undefined cartesian SRS') >= 0
+    assert out_ds.GetProjectionRef().find('Undefined Cartesian SRS') >= 0
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(4326)
     ret = out_ds.SetProjection(srs.ExportToWkt())
@@ -1219,7 +1219,7 @@ def test_gpkg_15():
 
     out_ds = gdal.Open('/vsimem/tmp.gpkg')
     assert out_ds.GetSpatialRef().IsLocal()
-    assert out_ds.GetProjectionRef().find('Undefined cartesian SRS') >= 0
+    assert out_ds.GetProjectionRef().find('Undefined Cartesian SRS') >= 0
     # Test setting on read-only dataset
     gdal.PushErrorHandler()
     ret = out_ds.SetProjection('')
@@ -3226,12 +3226,12 @@ def test_gpkg_wkt2():
 
     lyr = ds.ExecuteSQL('SELECT * FROM gpkg_spatial_ref_sys ORDER BY srs_id')
     f = lyr.GetNextFeature()
-    assert f.GetField('srs_name') == 'Undefined cartesian SRS'
+    assert f.GetField('srs_name') == 'Undefined Cartesian SRS'
     assert f.GetField('srs_id') == -1
     assert f.GetField('organization') == 'NONE'
     assert f.GetField('organization_coordsys_id') == -1
     assert f.GetField('definition') == 'undefined'
-    assert f.GetField('description') == 'undefined cartesian coordinate reference system'
+    assert f.GetField('description') == 'undefined Cartesian coordinate reference system'
     assert f.GetField('definition_12_063') == 'undefined'
 
     lyr.GetNextFeature()
@@ -3385,6 +3385,45 @@ def test_gpkg_coordinate_epoch():
     ds = gdal.Open('/vsimem/tmp.gpkg')
     srs = ds.GetSpatialRef()
     assert srs.GetCoordinateEpoch() == 2021.3
+    ds = None
+
+    gdal.Unlink('/vsimem/tmp.gpkg')
+
+
+###############################################################################
+# Test flushing only a subset of bands
+
+
+@pytest.mark.parametrize('tile_format', ['PNG_JPEG', 'PNG', 'PNG8', 'JPEG', 'WEBP'])
+def test_gpkg_flushing_not_all_bands(tile_format):
+
+    drv_req_dict = {
+        'PNG_JPEG': ['PNG', 'JPEG'],
+        'PNG': 'PNG',
+        'PNG8': 'PNG',
+        'JPEG': 'JPEG',
+        'WEBP': 'WEBP'
+    }
+    drv_req = drv_req_dict[tile_format]
+    if not isinstance(drv_req, list):
+        drv_req = [drv_req]
+    for drv in drv_req:
+        if gdal.GetDriverByName(drv) is None:
+            pytest.skip()
+
+    out_filename = '/vsimem/test.gpkg'
+    ds = gdal.GetDriverByName('GPKG').Create(out_filename, 256, 256, 4,
+                                             options = ['TILE_FORMAT=' + tile_format])
+    ds.SetGeoTransform([0, 1, 0, 0, 0, -1])
+    ds.GetRasterBand(1).Fill(255)
+    ds.GetRasterBand(2).Fill(255)
+    ds.GetRasterBand(3).Fill(255)
+    ds.FlushCache()
+    ds.GetRasterBand(4).Fill(255)
+    ds = None
+
+    ds = gdal.Open(out_filename)
+    assert ([ds.GetRasterBand(i+1).ComputeRasterMinMax() for i in range(ds.RasterCount)]) == [(255.0, 255.0)] * 4
     ds = None
 
     gdal.Unlink('/vsimem/tmp.gpkg')
