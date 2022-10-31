@@ -34,7 +34,6 @@
 #include <limits>
 #include <new>
 
-CPL_CVSID("$Id$")
 
 #define N_ELEMENTS(x)  (sizeof(x)/sizeof(x[0]))
 
@@ -620,7 +619,7 @@ ADRGDataset::~ADRGDataset()
 
                 /* Field SCN */
                 sizeOfFields[nFields] = (nNextAvailableBlock - 1) * 128 * 128 * 3;
-                nFields++;
+                // nFields++;
 
                 FinishWriteLeader(fd, pos, 9, 9, 3, N_ELEMENTS(sizeOfFields), sizeOfFields, nameOfFields);
             }

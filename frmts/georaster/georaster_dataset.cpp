@@ -42,7 +42,6 @@
 
 #include <memory>
 
-CPL_CVSID("$Id$")
 
 //  ---------------------------------------------------------------------------
 //                                                           GeoRasterDataset()
@@ -652,8 +651,7 @@ boolean GeoRasterDataset::JP2_CopyDirect( const char* pszJP2Filename,
         if( EQUAL( oBox.GetType(), "jp2c" ) )
         {
             size_t nCount = 0;
-            size_t nSize = 0;
-            size_t nDataLength = oBox.GetDataLength();
+            const size_t nDataLength = oBox.GetDataLength();
 
             nLBox = CPL_MSBWORD32( (int) nDataLength + 8 );
 
@@ -664,9 +662,9 @@ boolean GeoRasterDataset::JP2_CopyDirect( const char* pszJP2Filename,
 
             while( nCount < nDataLength )
             {
-                size_t nChunk = (size_t) MIN( nCache, nDataLength - nCount );
+                const size_t nChunk = (size_t) MIN( nCache, nDataLength - nCount );
 
-                nSize = VSIFReadL( pBuffer, 1, nChunk, fpInput );
+                const size_t nSize = VSIFReadL( pBuffer, 1, nChunk, fpInput );
 
                 if ( nSize != nChunk )
                 {
@@ -2683,11 +2681,12 @@ const char* GeoRasterDataset::_GetGCPProjection()
 
 CPLErr GeoRasterDataset::IBuildOverviews( const char* pszResampling,
                                           int nOverviews,
-                                          int* panOverviewList,
+                                          const int* panOverviewList,
                                           int nListBands,
-                                          int* panBandList,
+                                          const int* panBandList,
                                           GDALProgressFunc pfnProgress,
-                                          void* pProgressData )
+                                          void* pProgressData,
+                                          CSLConstList papszOptions )
 {
     (void) panBandList;
     (void) nListBands;
@@ -2871,13 +2870,14 @@ CPLErr GeoRasterDataset::IBuildOverviews( const char* pszResampling,
             i / (double) nBands, ( i + 1) / (double) nBands,
             pfnProgress, pProgressData );
 
-        eErr = GDALRegenerateOverviews(
+        eErr = GDALRegenerateOverviewsEx(
             (GDALRasterBandH) poBand,
             poBand->nOverviewCount,
             (GDALRasterBandH*) poBand->papoOverviews,
             pszResampling,
             GDALScaledProgress,
-            pScaledProgressData );
+            pScaledProgressData,
+            papszOptions);
 
         GDALDestroyScaledProgress( pScaledProgressData );
     }

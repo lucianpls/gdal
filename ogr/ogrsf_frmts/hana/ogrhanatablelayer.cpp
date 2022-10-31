@@ -34,14 +34,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <regex>
+#include <sstream>
 
 #include "odbc/Exception.h"
-#include "odbc/ResultSet.h"
 #include "odbc/PreparedStatement.h"
+#include "odbc/ResultSet.h"
+#include "odbc/Statement.h"
 #include "odbc/Types.h"
 
-CPL_CVSID("$Id$")
 
 namespace OGRHANA {
 namespace {
@@ -118,15 +118,22 @@ CPLString GetParameterValue(short type, const CPLString& typeName, bool isArray)
         return "?";
 }
 
-std::vector<int> ParseIntValues(const char* str)
+std::vector<int> ParseIntValues(const std::string& str)
 {
     std::vector<int> values;
-    std::stringstream stream(str);
-    while (stream.good())
+    try
     {
-        std::string value;
-        getline(stream, value, ',');
-        values.push_back(std::atoi(value.c_str()));
+        std::stringstream stream(str);
+        while (stream.good())
+        {
+            std::string value;
+            std::getline(stream, value, ',');
+            values.push_back(std::stoi(value.c_str()));
+        }
+    }
+    catch (...)
+    {
+        values.clear();
     }
     return values;
 }
@@ -142,20 +149,23 @@ ColumnTypeInfo ParseColumnTypeInfo(const CPLString& typeDef)
     CPLString typeName;
     std::vector<int> typeSize;
 
-    if (std::strstr(typeDef, "(") == nullptr)
+    const size_t posStart = typeDef.find("(");
+    if (posStart == std::string::npos)
     {
         typeName = typeDef;
     }
     else
     {
-        const auto regex = std::regex(R"((\w+)+\((\d+(,\d+)*)\)$)");
-        std::smatch match;
-        std::regex_search(typeDef, match, regex);
-
-        if (match.size() != 0)
+        const size_t posEnd = typeDef.rfind(")");
+        if (posEnd != std::string::npos && posEnd > posStart)
         {
-            typeName.assign(match[1]);
-            typeSize = ParseIntValues(match[2].str().c_str());
+            const size_t posLast = typeDef.find_last_not_of(" \n\r\t");
+            if (posLast == posEnd)
+            {
+                typeName = typeDef.substr(0, posStart);
+                const std::string values = typeDef.substr(posStart + 1, posEnd - posStart - 1);
+                typeSize = ParseIntValues(values);
+            }
         }
 
         if (typeSize.empty() || typeSize.size() > 2)
@@ -164,6 +174,8 @@ ColumnTypeInfo ParseColumnTypeInfo(const CPLString& typeDef)
             return {"", odbc::SQLDataTypes::Unknown, 0, 0};
         }
     }
+
+    typeName.Trim();
 
     if (EQUAL(typeName.c_str(), "BOOLEAN"))
         return {typeName, odbc::SQLDataTypes::Boolean, 0, 0};
@@ -418,7 +430,7 @@ OGRHanaTableLayer::OGRHanaTableLayer(
 
 OGRHanaTableLayer::~OGRHanaTableLayer()
 {
-    FlushPendingFeatures();
+    FlushPendingBatches(true);
 }
 
 /* -------------------------------------------------------------------- */
@@ -436,13 +448,26 @@ OGRErr OGRHanaTableLayer::Initialize()
         return err;
 
     if (fidFieldIndex_ != OGRNullFID)
+    {
         CPLDebug(
             "HANA", "table %s has FID column %s.", tableName_.c_str(),
             fidFieldName_.c_str());
+
+        CPLString sql = CPLString().Printf(
+            "SELECT COUNT(*) FROM %s", GetFullTableNameQuoted(schemaName_, tableName_).c_str());
+        odbc::StatementRef stmt = dataSource_->CreateStatement();
+        odbc::ResultSetRef rs = stmt->executeQuery(sql.c_str());
+        allowAutoFIDOnCreateFeature_ = rs->next() ? (*rs->getLong(1) == 0) : false;
+        rs->close();
+    }
     else
+    {
         CPLDebug(
             "HANA", "table %s has no FID column, FIDs will not be reliable!",
             tableName_.c_str());
+
+        allowAutoFIDOnCreateFeature_ = true;
+    }
 
     return OGRERR_NONE;
 }
@@ -843,20 +868,67 @@ OGRErr OGRHanaTableLayer::DropTable()
 }
 
 /* -------------------------------------------------------------------- */
-/*                        FlushPendingFeatures()                        */
+/*                        ExecutePendingBatches()                       */
 /* -------------------------------------------------------------------- */
 
-void OGRHanaTableLayer::FlushPendingFeatures()
+OGRErr OGRHanaTableLayer::ExecutePendingBatches(BatchOperation op)
 {
-    if (HasPendingFeatures())
+    auto hasFlag = [op](BatchOperation flag)
+    {
+        return (op & flag) == flag;
+    };
+
+    try
+    {
+        if (!deleteFeatureStmt_.isNull()
+            && deleteFeatureStmt_->getBatchDataSize() > 0
+            && hasFlag(BatchOperation::DELETE))
+            deleteFeatureStmt_->executeBatch();
+        if (!insertFeatureStmtWithFID_.isNull()
+            && insertFeatureStmtWithFID_->getBatchDataSize() > 0
+            && hasFlag(BatchOperation::INSERT))
+            insertFeatureStmtWithFID_->executeBatch();
+        if (!insertFeatureStmtWithoutFID_.isNull()
+            && insertFeatureStmtWithoutFID_->getBatchDataSize() > 0
+            && hasFlag(BatchOperation::INSERT))
+            insertFeatureStmtWithoutFID_->executeBatch();
+        if (!updateFeatureStmt_.isNull()
+            && updateFeatureStmt_->getBatchDataSize() > 0
+            && hasFlag(BatchOperation::UPDATE))
+            updateFeatureStmt_->executeBatch();
+
+        return OGRERR_NONE;
+    }
+    catch (const odbc::Exception& ex)
+    {
+        ClearBatches();
+
+        CPLError(
+            CE_Failure, CPLE_AppDefined,
+            "Failed to execute batch commands: %s", ex.what());
+        return OGRERR_FAILURE;
+    }
+}
+
+/* -------------------------------------------------------------------- */
+/*                        FlushPendingBatches()                         */
+/* -------------------------------------------------------------------- */
+
+void OGRHanaTableLayer::FlushPendingBatches(bool commit)
+{
+    if (!HasPendingBatches())
+        return;
+
+    OGRErr err = ExecutePendingBatches(BatchOperation::ALL);
+    if (OGRERR_NONE == err && commit && !dataSource_->IsTransactionStarted())
         dataSource_->Commit();
 }
 
 /* -------------------------------------------------------------------- */
-/*                        HasPendingFeatures()                          */
+/*                        HasPendingBatches()                           */
 /* -------------------------------------------------------------------- */
 
-bool OGRHanaTableLayer::HasPendingFeatures() const
+bool OGRHanaTableLayer::HasPendingBatches() const
 {
     return (!deleteFeatureStmt_.isNull()
             && deleteFeatureStmt_->getBatchDataSize() > 0)
@@ -1007,12 +1079,40 @@ OGRErr OGRHanaTableLayer::GetGeometryWkb(
 }
 
 /************************************************************************/
+/*                                 GetExtent()                          */
+/************************************************************************/
+
+OGRErr OGRHanaTableLayer::GetExtent(int geomField, OGREnvelope* extent, int force)
+{
+    if(geomField >=0 && geomField < GetLayerDefn()->GetGeomFieldCount())
+    {
+        FlushPendingBatches(false);
+    }
+
+    return OGRHanaLayer::GetExtent(geomField, extent, force);
+}
+
+/************************************************************************/
+/*                              GetFeatureCount()                       */
+/************************************************************************/
+
+GIntBig OGRHanaTableLayer::GetFeatureCount(int force)
+{
+    FlushPendingBatches(false);
+
+    return OGRHanaLayer::GetFeatureCount(force);
+}
+
+/************************************************************************/
 /*                              ResetReading()                          */
 /************************************************************************/
 
 void OGRHanaTableLayer::ResetReading()
 {
-    FlushPendingFeatures();
+    FlushPendingBatches(false);
+
+    if (OGRNullFID != fidFieldIndex_ && nextFeatureId_ > 0)
+        allowAutoFIDOnCreateFeature_ = false;
 
     OGRHanaLayer::ResetReading();
 }
@@ -1082,7 +1182,7 @@ OGRErr OGRHanaTableLayer::ICreateFeature(OGRFeature* feature)
         return OGRERR_FAILURE;
     }
 
-    if( nullptr == feature )
+    if (nullptr == feature)
     {
         CPLError( CE_Failure, CPLE_AppDefined,
                   "NULL pointer to OGRFeature passed to CreateFeature()." );
@@ -1091,50 +1191,65 @@ OGRErr OGRHanaTableLayer::ICreateFeature(OGRFeature* feature)
 
     EnsureInitialized();
 
-    GIntBig nFID = feature->GetFID();
-    bool withFID = nFID != OGRNullFID;
-    bool withBatch = withFID && dataSource_->IsTransactionStarted();
+    OGRErr err = ExecutePendingBatches(BatchOperation::DELETE | BatchOperation::UPDATE);
+    if (OGRERR_NONE != err)
+        return err;
+
+    bool hasFID = feature->GetFID() != OGRNullFID;
+    if (hasFID && OGRNullFID != fidFieldIndex_)
+        allowAutoFIDOnCreateFeature_ = false;
+
+    if (!hasFID && allowAutoFIDOnCreateFeature_)
+    {
+        feature->SetFID(nextFeatureId_++);
+        hasFID = true;
+    }
+
+    bool useBatch = hasFID && dataSource_->IsTransactionStarted();
 
     try
     {
-        odbc::PreparedStatementRef& stmt = withFID ? insertFeatureStmtWithFID_ : insertFeatureStmtWithoutFID_;
+        odbc::PreparedStatementRef& stmt = hasFID ? insertFeatureStmtWithFID_ : insertFeatureStmtWithoutFID_;
 
         if (stmt.isNull())
         {
-            stmt = CreateInsertFeatureStatement(withFID);
+            stmt = CreateInsertFeatureStatement(hasFID);
             if (stmt.isNull())
                 return OGRERR_FAILURE;
         }
 
-        OGRErr err = SetStatementParameters(*stmt, feature, true, withFID, "CreateFeature");
-
+        err = SetStatementParameters(*stmt, feature, true, hasFID, "CreateFeature");
         if (OGRERR_NONE != err)
             return err;
 
-        if (withBatch)
+        if (useBatch)
             stmt->addBatch();
 
-        auto ret = ExecuteUpdate(*stmt, withBatch, "CreateFeature");
+        auto ret = ExecuteUpdate(*stmt, useBatch, "CreateFeature");
 
         err = ret.first;
         if (OGRERR_NONE != err)
             return err;
 
-        if (!withFID)
+        if (!hasFID && OGRNullFID != fidFieldIndex_)
         {
             const CPLString sql = CPLString().Printf(
                 "SELECT CURRENT_IDENTITY_VALUE() \"current identity value\" FROM %s",
                 GetFullTableNameQuoted(schemaName_, tableName_).c_str());
 
             if (currentIdentityValueStmt_.isNull())
+            {
                 currentIdentityValueStmt_ = dataSource_->PrepareStatement(sql.c_str());
+                if( currentIdentityValueStmt_.isNull())
+                    return OGRERR_FAILURE;
+            }
 
             odbc::ResultSetRef rsIdentity = currentIdentityValueStmt_->executeQuery();
-            if ( rsIdentity->next() )
+            if (rsIdentity->next())
             {
-              odbc::Long id = rsIdentity->getLong( 1 );
-              if ( !id.isNull() )
-                feature->SetFID(static_cast<GIntBig>( *id ) );
+              odbc::Long id = rsIdentity->getLong(1);
+              if (!id.isNull())
+                feature->SetFID(static_cast<GIntBig>(*id));
             }
             rsIdentity->close();
         }
@@ -1195,6 +1310,10 @@ OGRErr OGRHanaTableLayer::DeleteFeature(GIntBig nFID)
             return OGRERR_FAILURE;
     }
 
+    OGRErr err = ExecutePendingBatches(BatchOperation::INSERT | BatchOperation::UPDATE);
+    if (OGRERR_NONE != err)
+        return err;
+
     deleteFeatureStmt_->setLong(1, odbc::Long(static_cast<std::int64_t>(nFID)));
     bool withBatch = dataSource_->IsTransactionStarted();
     if (withBatch)
@@ -1222,8 +1341,8 @@ OGRErr OGRHanaTableLayer::ISetFeature(OGRFeature* feature)
 
     if( nullptr == feature )
     {
-        CPLError( CE_Failure, CPLE_AppDefined,
-                  "NULL pointer to OGRFeature passed to SetFeature()." );
+        CPLError(CE_Failure, CPLE_AppDefined,
+                  "NULL pointer to OGRFeature passed to SetFeature().");
         return OGRERR_FAILURE;
     }
 
@@ -1253,9 +1372,16 @@ OGRErr OGRHanaTableLayer::ISetFeature(OGRFeature* feature)
             return OGRERR_FAILURE;
     }
 
+    if (OGRNullFID != fidFieldIndex_)
+        allowAutoFIDOnCreateFeature_ = false;
+
+    OGRErr err = ExecutePendingBatches(BatchOperation::DELETE | BatchOperation::INSERT);
+    if (OGRERR_NONE != err)
+        return err;
+
     try
     {
-        OGRErr err = SetStatementParameters(
+        err = SetStatementParameters(
             *updateFeatureStmt_, feature, false, false, "SetFeature");
 
         if (OGRERR_NONE != err)
@@ -1292,14 +1418,23 @@ OGRErr OGRHanaTableLayer::CreateField(OGRFieldDefn* srsField, int approxOK)
         return OGRERR_FAILURE;
     }
 
+    if (srsField->GetNameRef() == nullptr)
+    {
+        CPLError(
+            CE_Failure, CPLE_AppDefined, "Field name cannot be NULL");
+        return OGRERR_FAILURE;
+    }
+
     EnsureInitialized();
 
     OGRFieldDefn dstField(srsField);
 
     if (launderColumnNames_)
     {
-        CPLString launderName = LaunderName(dstField.GetNameRef());
-        dstField.SetName(launderName.c_str());
+        auto nameRes = dataSource_->LaunderName(dstField.GetNameRef());
+        if (nameRes.first != OGRERR_NONE)
+            return nameRes.first;
+        dstField.SetName(nameRes.second.c_str());
     }
 
     if (fidFieldIndex_ != OGRNullFID
@@ -1368,6 +1503,8 @@ OGRErr OGRHanaTableLayer::CreateField(OGRFieldDefn* srsField, int approxOK)
             CPLString().Printf(" DEFAULT %s", GetColumnDefaultValue(dstField));
     }
 
+    FlushPendingBatches(false);
+
     const CPLString sql = CPLString().Printf(
         "ALTER TABLE %s ADD(%s)",
         GetFullTableNameQuoted(schemaName_, tableName_).c_str(),
@@ -1405,7 +1542,7 @@ OGRErr OGRHanaTableLayer::CreateField(OGRFieldDefn* srsField, int approxOK)
     attrColumns_.push_back(clmDesc);
     featureDefn_->AddFieldDefn(&dstField);
 
-    ClearQueryStatement();
+    ColumnsChanged();
 
     return OGRERR_NONE;
 }
@@ -1444,6 +1581,8 @@ OGRErr OGRHanaTableLayer::CreateGeomField(OGRGeomFieldDefn* geomField, int)
         return OGRERR_FAILURE;
     }
 
+    FlushPendingBatches(false);
+
     int srid = dataSource_->GetSrsId(geomField->GetSpatialRef());
     if (srid == UNDETERMINED_SRID)
     {
@@ -1454,9 +1593,14 @@ OGRErr OGRHanaTableLayer::CreateGeomField(OGRGeomFieldDefn* geomField, int)
     }
 
 
-    CPLString clmName(launderColumnNames_
-                      ? LaunderName(geomField->GetNameRef()).c_str()
-                      : geomField->GetNameRef());
+    CPLString clmName(geomField->GetNameRef());
+    if (launderColumnNames_)
+    {
+        auto nameRes = dataSource_->LaunderName(geomField->GetNameRef());
+        if (nameRes.first != OGRERR_NONE)
+            return nameRes.first;
+        clmName.swap(nameRes.second);
+    }
 
     if (clmName.empty())
         clmName = FindGeomFieldName(*featureDefn_);
@@ -1488,7 +1632,7 @@ OGRErr OGRHanaTableLayer::CreateGeomField(OGRGeomFieldDefn* geomField, int)
          srid, newGeomField->IsNullable() == TRUE});
     featureDefn_->AddGeomFieldDefn(std::move(newGeomField));
 
-    ResetPreparedStatements();
+    ColumnsChanged();
 
     return OGRERR_NONE;
 }
@@ -1514,6 +1658,8 @@ OGRErr OGRHanaTableLayer::DeleteField(int field)
     }
 
     EnsureInitialized();
+
+    FlushPendingBatches(false);
 
     CPLString clmName = featureDefn_->GetFieldDefn(field)->GetNameRef();
     CPLString sql = CPLString().Printf(
@@ -1541,7 +1687,7 @@ OGRErr OGRHanaTableLayer::DeleteField(int field)
     attrColumns_.erase(it);
     OGRErr ret = featureDefn_->DeleteFieldDefn(field);
 
-    ResetPreparedStatements();
+    ColumnsChanged();
 
     return ret;
 }
@@ -1587,9 +1733,17 @@ OGRErr OGRHanaTableLayer::AlterFieldDefn(
         return OGRERR_FAILURE;
     }
 
-    CPLString clmName = launderColumnNames_
-                            ? LaunderName(newFieldDefn->GetNameRef())
-                            : CPLString(newFieldDefn->GetNameRef());
+    CPLString clmName(newFieldDefn->GetNameRef());
+
+    if (launderColumnNames_)
+    {
+        auto nameRes = dataSource_->LaunderName(newFieldDefn->GetNameRef());
+        if (nameRes.first != OGRERR_NONE)
+            return nameRes.first;
+        clmName.swap(nameRes.second);
+    }
+
+    FlushPendingBatches(false);
 
     ColumnTypeInfo columnTypeInfo = GetColumnTypeInfo(*newFieldDefn);
 
@@ -1699,9 +1853,7 @@ OGRErr OGRHanaTableLayer::AlterFieldDefn(
         attrClmDesc.name.assign(newFieldDefn->GetDefault());
     }
 
-    ClearQueryStatement();
-    ResetReading();
-    ResetPreparedStatements();
+    ColumnsChanged();
 
     return OGRERR_NONE;
 }
@@ -1718,6 +1870,17 @@ void OGRHanaTableLayer::ClearBatches()
         insertFeatureStmtWithoutFID_->clearBatch();
     if (!updateFeatureStmt_.isNull())
         updateFeatureStmt_->clearBatch();
+}
+
+/************************************************************************/
+/*                          ColumnsChanged()                            */
+/************************************************************************/
+
+void OGRHanaTableLayer::ColumnsChanged()
+{
+    ClearQueryStatement();
+    ResetReading();
+    ResetPreparedStatements();
 }
 
 /************************************************************************/
@@ -1776,34 +1939,14 @@ OGRErr OGRHanaTableLayer::StartTransaction()
 
 OGRErr OGRHanaTableLayer::CommitTransaction()
 {
-    try
+    if (HasPendingBatches())
     {
-        if (!deleteFeatureStmt_.isNull()
-            && deleteFeatureStmt_->getBatchDataSize() > 0)
-            deleteFeatureStmt_->executeBatch();
-        if (!insertFeatureStmtWithFID_.isNull()
-            && insertFeatureStmtWithFID_->getBatchDataSize() > 0)
-            insertFeatureStmtWithFID_->executeBatch();
-        if (!insertFeatureStmtWithoutFID_.isNull()
-            && insertFeatureStmtWithoutFID_->getBatchDataSize() > 0)
-            insertFeatureStmtWithoutFID_->executeBatch();
-        if (!updateFeatureStmt_.isNull()
-            && updateFeatureStmt_->getBatchDataSize() > 0)
-            updateFeatureStmt_->executeBatch();
-
-        ClearBatches();
-    }
-    catch (const odbc::Exception& ex)
-    {
-        ClearBatches();
-        CPLError(
-            CE_Failure, CPLE_AppDefined, "Failed to execute batch insert: %s",
-            ex.what());
-        return OGRERR_FAILURE;
+        OGRErr err = ExecutePendingBatches(BatchOperation::ALL);
+        if (OGRERR_NONE != err)
+            return err;
     }
 
-    dataSource_->CommitTransaction();
-    return OGRERR_NONE;
+    return dataSource_->CommitTransaction();
 }
 
 /************************************************************************/

@@ -28,10 +28,12 @@
 
 #include "cpl_json.h"
 #include "cpl_time.h"
+#include "cpl_multiproc.h"
 #include "gdal_pam.h"
 #include "ogrsf_frmts.h"
 #include "ogr_p.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <limits>
 #include <map>
@@ -52,6 +54,15 @@ OGRParquetLayerBase::OGRParquetLayerBase(OGRParquetDataset* poDS,
     OGRArrowLayer(poDS, pszLayerName),
     m_poDS(poDS)
 {
+}
+
+/************************************************************************/
+/*                           GetDataset()                               */
+/************************************************************************/
+
+GDALDataset* OGRParquetLayer::GetDataset()
+{
+    return m_poDS;
 }
 
 /************************************************************************/
@@ -294,13 +305,13 @@ int OGRParquetLayerBase::TestCapability(const char* pszCap)
         return true;
     }
 
-    if( EQUAL(pszCap, OLCStringsAsUTF8) )
-        return true;
-
     if( EQUAL(pszCap, OLCMeasuredGeometries) )
         return true;
 
-    return false;
+    if( EQUAL(pszCap, OLCFastSetNextByIndex) )
+        return true;
+
+    return OGRArrowLayer::TestCapability(pszCap);
 }
 
 /************************************************************************/
@@ -316,6 +327,18 @@ OGRParquetLayer::OGRParquetLayer(OGRParquetDataset* poDS,
     const char* pszParquetBatchSize = CPLGetConfigOption("OGR_PARQUET_BATCH_SIZE", nullptr);
     if( pszParquetBatchSize )
         m_poArrowReader->set_batch_size(CPLAtoGIntBig(pszParquetBatchSize));
+
+    const char* pszNumThreads = CPLGetConfigOption("GDAL_NUM_THREADS", nullptr);
+    int nNumThreads = 0;
+    if( pszNumThreads == nullptr )
+        nNumThreads = std::min(4, CPLGetNumCPUs());
+    else
+        nNumThreads = EQUAL(pszNumThreads, "ALL_CPUS") ? CPLGetNumCPUs() : atoi(pszNumThreads);
+    if( nNumThreads > 1 )
+    {
+        CPL_IGNORE_RET_VAL(arrow::SetCpuThreadPoolCapacity(nNumThreads));
+        m_poArrowReader->set_use_threads(true);
+    }
 
     EstablishFeatureDefn();
     CPLAssert( static_cast<int>(m_aeGeomEncoding.size()) == m_poFeatureDefn->GetGeomFieldCount() );
@@ -392,6 +415,23 @@ void OGRParquetLayer::EstablishFeatureDefn()
     CPLAssert( static_cast<int>(m_anMapFieldIndexToParquetColumn.size()) == m_poFeatureDefn->GetFieldCount() );
     CPLAssert( static_cast<int>(m_anMapGeomFieldIndexToArrowColumn.size()) == m_poFeatureDefn->GetGeomFieldCount() );
     CPLAssert( static_cast<int>(m_anMapGeomFieldIndexToParquetColumn.size()) == m_poFeatureDefn->GetGeomFieldCount() );
+
+    if( !fields.empty() )
+    {
+        try
+        {
+            auto poRowGroup = m_poArrowReader->parquet_reader()->RowGroup(0);
+            if( poRowGroup )
+            {
+                auto poColumn = poRowGroup->metadata()->ColumnChunk(0);
+                CPLDebug("PARQUET", "Compression (of first column): %s",
+                         arrow::util::Codec::GetCodecAsString(poColumn->compression()).c_str());
+            }
+        }
+        catch( const std::exception& )
+        {
+        }
+    }
 }
 
 /************************************************************************/
@@ -777,6 +817,39 @@ void OGRParquetLayer::ResetReading()
 }
 
 /************************************************************************/
+/*                      CreateRecordBatchReader()                       */
+/************************************************************************/
+
+bool OGRParquetLayer::CreateRecordBatchReader(int iStartingRowGroup)
+{
+    std::vector<int> anRowGroups;
+    const int nNumGroups = m_poArrowReader->num_row_groups();
+    anRowGroups.reserve(nNumGroups - iStartingRowGroup);
+    for( int i = iStartingRowGroup; i < nNumGroups; ++i )
+        anRowGroups.push_back(i);
+    arrow::Status status;
+    if( m_bIgnoredFields )
+    {
+        status = m_poArrowReader->GetRecordBatchReader(anRowGroups,
+                                              m_anRequestedParquetColumns,
+                                              &m_poRecordBatchReader);
+    }
+    else
+    {
+        status = m_poArrowReader->GetRecordBatchReader(anRowGroups,
+                                              &m_poRecordBatchReader);
+    }
+    if( m_poRecordBatchReader == nullptr )
+    {
+        CPLError(CE_Failure, CPLE_AppDefined,
+                 "GetRecordBatchReader() failed: %s",
+                 status.message().c_str());
+        return false;
+    }
+    return true;
+}
+
+/************************************************************************/
 /*                           ReadNextBatch()                            */
 /************************************************************************/
 
@@ -796,30 +869,8 @@ bool OGRParquetLayer::ReadNextBatch()
 
     if( m_poRecordBatchReader == nullptr )
     {
-        std::vector<int> anRowGroups;
-        const int nNumGroups = m_poArrowReader->num_row_groups();
-        anRowGroups.reserve(nNumGroups);
-        for( int i = 0; i < nNumGroups; ++i )
-            anRowGroups.push_back(i);
-        arrow::Status status;
-        if( m_bIgnoredFields )
-        {
-            status = m_poArrowReader->GetRecordBatchReader(anRowGroups,
-                                                  m_anRequestedParquetColumns,
-                                                  &m_poRecordBatchReader);
-        }
-        else
-        {
-            status = m_poArrowReader->GetRecordBatchReader(anRowGroups,
-                                                  &m_poRecordBatchReader);
-        }
-        if( m_poRecordBatchReader == nullptr )
-        {
-            CPLError(CE_Failure, CPLE_AppDefined,
-                     "GetRecordBatchReader() failed: %s",
-                     status.message().c_str());
+        if( !CreateRecordBatchReader(0) )
             return false;
-        }
     }
 
     ++m_iRecordBatch;
@@ -866,6 +917,7 @@ bool OGRParquetLayer::ReadNextBatch()
         {
             iCol = m_anMapFieldIndexToArrowColumn[i][0];
         }
+        CPL_IGNORE_RET_VAL(iCol); // to make cppcheck happy
 
         CPLAssert(iCol < static_cast<int>(poColumns.size()));
         CPLAssert(m_poSchema->fields()[m_anMapFieldIndexToArrowColumn[i][0]]->type()->id() ==
@@ -885,6 +937,7 @@ bool OGRParquetLayer::ReadNextBatch()
         {
             iCol = m_anMapGeomFieldIndexToArrowColumn[i];
         }
+        CPL_IGNORE_RET_VAL(iCol); // to make cppcheck happy
 
         CPLAssert(iCol < static_cast<int>(poColumns.size()));
         CPLAssert(m_poSchema->fields()[m_anMapGeomFieldIndexToArrowColumn[i]]->type()->id() ==
@@ -1146,4 +1199,101 @@ char** OGRParquetLayer::GetMetadata( const char* pszDomain )
         return m_aosFeatherMetadata.List();
     }
     return OGRLayer::GetMetadata(pszDomain);
+}
+
+/************************************************************************/
+/*                          GetArrowStream()                            */
+/************************************************************************/
+
+bool OGRParquetLayer::GetArrowStream(struct ArrowArrayStream* out_stream,
+                                     CSLConstList papszOptions)
+{
+    const char* pszMaxFeaturesInBatch = CSLFetchNameValue(
+        papszOptions, "MAX_FEATURES_IN_BATCH");
+    if( pszMaxFeaturesInBatch )
+    {
+        int nMaxBatchSize = atoi(pszMaxFeaturesInBatch);
+        if( nMaxBatchSize <= 0 )
+            nMaxBatchSize = 1;
+        if( nMaxBatchSize > INT_MAX - 1 )
+            nMaxBatchSize = INT_MAX - 1;
+        m_poArrowReader->set_batch_size(nMaxBatchSize);
+    }
+    return OGRArrowLayer::GetArrowStream(out_stream, papszOptions);
+}
+
+
+/************************************************************************/
+/*                           SetNextByIndex()                           */
+/************************************************************************/
+
+OGRErr OGRParquetLayer::SetNextByIndex( GIntBig nIndex )
+{
+    if( nIndex < 0 )
+        return OGRERR_FAILURE;
+
+    const auto metadata = m_poArrowReader->parquet_reader()->metadata();
+    if( nIndex >= metadata->num_rows() )
+        return OGRERR_FAILURE;
+
+    if( m_bSingleBatch )
+    {
+        ResetReading();
+        m_nIdxInBatch = nIndex;
+        m_nFeatureIdx = nIndex;
+        return OGRERR_NONE;
+    }
+
+    const int nNumGroups = m_poArrowReader->num_row_groups();
+    int64_t nAccRows = 0;
+    const auto nBatchSize = m_poArrowReader->properties().batch_size();
+    m_iRecordBatch = -1;
+    ResetReading();
+    m_iRecordBatch = 0;
+    for( int iGroup = 0; iGroup < nNumGroups; ++iGroup )
+    {
+        const int64_t nNextAccRows = nAccRows + metadata->RowGroup(iGroup)->num_rows();
+        if( nIndex < nNextAccRows )
+        {
+            if( !CreateRecordBatchReader(iGroup) )
+                return OGRERR_FAILURE;
+
+            std::shared_ptr<arrow::RecordBatch> poBatch;
+            while( true )
+            {
+                auto status = m_poRecordBatchReader->ReadNext(&poBatch);
+                if( !status.ok() )
+                {
+                    CPLError(CE_Failure, CPLE_AppDefined,
+                             "ReadNext() failed: %s",
+                             status.message().c_str());
+                    m_iRecordBatch = -1;
+                    ResetReading();
+                    return OGRERR_FAILURE;
+                }
+                if( poBatch == nullptr )
+                {
+                    m_iRecordBatch = -1;
+                    ResetReading();
+                    return OGRERR_FAILURE;
+                }
+                if( nIndex < nAccRows + poBatch->num_rows() )
+                {
+                    break;
+                }
+                nAccRows += poBatch->num_rows();
+                m_iRecordBatch ++;
+            }
+            m_nIdxInBatch = nIndex - nAccRows;
+            m_nFeatureIdx = nIndex;
+            SetBatch(poBatch);
+            return OGRERR_NONE;
+        }
+        nAccRows = nNextAccRows;
+        m_iRecordBatch += (metadata->RowGroup(iGroup)->num_rows() + nBatchSize - 1) / nBatchSize;
+    }
+
+    m_iRecordBatch = -1;
+    ResetReading();
+    return OGRERR_FAILURE;
 }

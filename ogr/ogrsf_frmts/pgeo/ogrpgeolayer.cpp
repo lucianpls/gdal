@@ -35,7 +35,6 @@
 
 #include <algorithm>
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                            OGRPGeoLayer()                            */
@@ -352,7 +351,12 @@ OGRFeature *OGRPGeoLayer::GetFeature( GIntBig nFeatureId )
 
 int OGRPGeoLayer::TestCapability( CPL_UNUSED const char * pszCap )
 {
-    return FALSE;
+    if( EQUAL(pszCap,OLCZGeometries) )
+        return true;
+    if( EQUAL(pszCap,OLCMeasuredGeometries) )
+        return true;
+
+    return false;
 }
 
 /************************************************************************/

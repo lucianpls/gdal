@@ -31,7 +31,6 @@
 #include "ogrgeojsonreader.h"
 #include <sstream>
 
-CPL_CVSID("$Id$")
 
 CPLString OGRAMIGOCLOUDGetOptionValue(const char* pszFilename, const char* pszOptionName);
 
@@ -94,6 +93,8 @@ int OGRAmigoCloudDataSource::TestCapability( const char * pszCap )
         return TRUE;
     else if( EQUAL(pszCap,ODsCRandomLayerWrite) )
         return bReadWrite;
+    else if( EQUAL(pszCap,ODsCZGeometries) )
+        return TRUE;
     else
         return FALSE;
 }

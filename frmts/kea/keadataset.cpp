@@ -32,7 +32,6 @@
 #include "keacopy.h"
 #include "../frmts/hdf5/hdf5vfl.h"
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                     KEADatasetDriverUnload()                        */
@@ -139,14 +138,14 @@ GDALDataset *KEADataset::Open( GDALOpenInfo * poOpenInfo )
                 // /vsicurl etc
                 // do this same as libkea
                 H5::FileAccPropList keaAccessPlist = H5::FileAccPropList(H5::FileAccPropList::DEFAULT);
-                keaAccessPlist.setCache(kealib::KEA_MDC_NELMTS, kealib::KEA_RDCC_NELMTS, 
+                keaAccessPlist.setCache(kealib::KEA_MDC_NELMTS, kealib::KEA_RDCC_NELMTS,
                             kealib::KEA_RDCC_NBYTES, kealib::KEA_RDCC_W0);
                 keaAccessPlist.setSieveBufSize(kealib::KEA_SIEVE_BUF);
                 hsize_t blockSize = kealib::KEA_META_BLOCKSIZE;
                 keaAccessPlist.setMetaBlockSize(blockSize);
                 // but set the driver
                 keaAccessPlist.setDriver(HDF5VFLGetFileDriver(), nullptr);
-                
+
                 const H5std_string keaImgFilePath(poOpenInfo->pszFilename);
                 pH5File = new H5::H5File(keaImgFilePath, H5F_ACC_RDONLY, H5::FileCreatPropList::DEFAULT, keaAccessPlist);
             }
@@ -209,7 +208,7 @@ int KEADataset::Identify( GDALOpenInfo * poOpenInfo )
 
 // static function
 H5::H5File *KEADataset::CreateLL( const char * pszFilename,
-                                  int nXSize, int nYSize, int nBands,
+                                  int nXSize, int nYSize, int nBandsIn,
                                   GDALDataType eType,
                                   char ** papszParamList  )
 {
@@ -269,7 +268,7 @@ H5::H5File *KEADataset::CreateLL( const char * pszFilename,
         ndeflate = (unsigned int) atol( pszValue );
 
     kealib::KEADataType keaDataType = GDAL_to_KEA_Type( eType );
-    if( nBands > 0 && keaDataType == kealib::kea_undefined )
+    if( nBandsIn > 0 && keaDataType == kealib::kea_undefined )
     {
         CPLError( CE_Failure, CPLE_NotSupported,
                   "Data type %s not supported in KEA",
@@ -282,7 +281,7 @@ H5::H5File *KEADataset::CreateLL( const char * pszFilename,
         // now create it
         H5::H5File *keaImgH5File = kealib::KEAImageIO::createKEAImage( pszFilename,
                                                     keaDataType,
-                                                    nXSize, nYSize, nBands,
+                                                    nXSize, nYSize, nBandsIn,
                                                     nullptr, nullptr, nimageblockSize,
                                                     nattblockSize, nmdcElmts, nrdccNElmts,
                                                     nrdccNBytes, nrdccW0, nsieveBuf,
@@ -300,11 +299,11 @@ H5::H5File *KEADataset::CreateLL( const char * pszFilename,
 
 // static function- pointer set in driver
 GDALDataset *KEADataset::Create( const char * pszFilename,
-                                  int nXSize, int nYSize, int nBands,
+                                  int nXSize, int nYSize, int nBandsIn,
                                   GDALDataType eType,
                                   char ** papszParamList  )
 {
-    H5::H5File *keaImgH5File = CreateLL( pszFilename, nXSize, nYSize, nBands,
+    H5::H5File *keaImgH5File = CreateLL( pszFilename, nXSize, nYSize, nBandsIn,
                                          eType, papszParamList  );
     if( keaImgH5File == nullptr )
         return nullptr;
@@ -322,7 +321,7 @@ GDALDataset *KEADataset::Create( const char * pszFilename,
         // set all to thematic if asked
         if( bThematic )
         {
-            for( int nCount = 0; nCount < nBands; nCount++ )
+            for( int nCount = 0; nCount < nBandsIn; nCount++ )
             {
                 GDALRasterBand *pBand = pDataset->GetRasterBand(nCount+1);
                 pBand->SetMetadataItem("LAYER_TYPE", "thematic");
@@ -445,7 +444,7 @@ KEADataset::KEADataset( H5::H5File *keaImgH5File, GDALAccess eAccessIn )
         // Create the image IO and initialize the refcount.
         m_pImageIO = new kealib::KEAImageIO();
         m_pRefcount = new LockedRefCount();
-        
+
         // NULL until we read them in.
         m_papszMetadataList = nullptr;
         m_pGCPs = nullptr;
@@ -506,7 +505,7 @@ KEADataset::~KEADataset()
         delete m_pImageIO;
         delete m_pRefcount;
     }
-    
+
     CPLDestroyMutex( m_hMutex );
     m_hMutex = nullptr;
 }
@@ -618,9 +617,12 @@ void * KEADataset::GetInternalHandle(const char *)
 
 // this is called by GDALDataset::BuildOverviews. we implement this function to support
 // building of overviews
-CPLErr KEADataset::IBuildOverviews(const char *pszResampling, int nOverviews, int *panOverviewList,
-                                    int nListBands, int *panBandList, GDALProgressFunc pfnProgress,
-                                    void *pProgressData)
+CPLErr KEADataset::IBuildOverviews(const char *pszResampling,
+                                   int nOverviews, const int *panOverviewList,
+                                   int nListBands, const int *panBandList,
+                                   GDALProgressFunc pfnProgress,
+                                   void *pProgressData,
+                                   CSLConstList papszOptions)
 {
     // go through the list of bands that have been passed in
     int nCurrentBand, nOK = 1;
@@ -635,8 +637,8 @@ CPLErr KEADataset::IBuildOverviews(const char *pszResampling, int nOverviews, in
 
         // get GDAL to do the hard work. It will calculate the overviews and write them
         // back into the objects
-        if( GDALRegenerateOverviews( (GDALRasterBandH)pBand, nOverviews, (GDALRasterBandH*)pBand->GetOverviewList(),
-                                    pszResampling, pfnProgress, pProgressData ) != CE_None )
+        if( GDALRegenerateOverviewsEx( (GDALRasterBandH)pBand, nOverviews, (GDALRasterBandH*)pBand->GetOverviewList(),
+                                    pszResampling, pfnProgress, pProgressData, papszOptions ) != CE_None )
         {
             nOK = 0;
         }

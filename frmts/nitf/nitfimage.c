@@ -36,7 +36,6 @@
 #include "cpl_conv.h"
 #include "cpl_string.h"
 
-CPL_CVSID("$Id$")
 
 CPL_INLINE static void CPL_IGNORE_RET_VAL_INT(CPL_UNUSED int unused) {}
 
@@ -624,6 +623,22 @@ NITFImage *NITFImageAccess( NITFFile *psFile, int iSegment )
         CPLError(CE_Failure, CPLE_AppDefined, "Invalid values for block dimension/number");
         NITFImageDeaccess(psImage);
         return NULL;
+    }
+
+    if( psImage->nBlocksPerRow * psImage->nBlocksPerColumn * psImage->nBands > 1000 * 1000 )
+    {
+        // Sanity check to avoid allocating too much memory
+        VSIFSeekL( psFile->fp, 0, SEEK_END );
+        // This is really a very safe bound. A smarter check would taken
+        // into account the block size as well and/or the size of an entry
+        // in the offset table.
+        if( VSIFTellL(psFile->fp) < (unsigned)(psImage->nBlocksPerRow) * psImage->nBlocksPerColumn )
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "File is too small compared to the number of blocks");
+            NITFImageDeaccess(psImage);
+            return NULL;
+        }
     }
 
 /* -------------------------------------------------------------------- */

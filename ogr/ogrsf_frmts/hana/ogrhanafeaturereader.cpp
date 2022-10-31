@@ -38,7 +38,6 @@
 
 #include "odbc/Types.h"
 
-CPL_CVSID("$Id$")
 
 namespace OGRHANA {
 namespace {
@@ -218,7 +217,7 @@ odbc::String OGRHanaFeatureReader::GetFieldAsNString(
         int nSrcLen = static_cast<int>(std::strlen(str));
         int nSrcLenUTF = CPLStrlenUTF8(str);
 
-        if (maxCharLength > 0 && nSrcLenUTF > maxCharLength)
+        if (nSrcLenUTF > maxCharLength)
         {
             CPLDebug("HANA",
                      "Truncated field value '%s' at index %d to %d characters.",

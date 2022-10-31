@@ -44,7 +44,6 @@
 #include "gdal.h"
 #include "gdal_priv.h"
 
-CPL_CVSID("$Id$")
 
 static CPLMutex *hMutex = nullptr;
 static std::map<CPLString, GDALDataset *> *poMap = nullptr;
@@ -288,6 +287,9 @@ static void OGRCSVDriverUnload( GDALDriver * )
 /*                           RegisterOGRCSV()                           */
 /************************************************************************/
 
+#define XSTRINGIFY(x) #x
+#define STRINGIFY(x) XSTRINGIFY(x)
+
 void RegisterOGRCSV()
 
 {
@@ -298,6 +300,17 @@ void RegisterOGRCSV()
 
     poDriver->SetDescription("CSV");
     poDriver->SetMetadataItem(GDAL_DCAP_VECTOR, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_CREATE_LAYER, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_DELETE_LAYER, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_CREATE_FIELD, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_DELETE_FIELD, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_REORDER_FIELDS, "YES" );
+    poDriver->SetMetadataItem(GDAL_DMD_ALTER_FIELD_DEFN_FLAGS, "Name Type WidthPrecision" );
+
+    poDriver->SetMetadataItem(GDAL_DCAP_CURVE_GEOMETRIES, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_MEASURED_GEOMETRIES, "YES");
+    poDriver->SetMetadataItem(GDAL_DCAP_Z_GEOMETRIES, "YES");
+
     poDriver->SetMetadataItem(GDAL_DMD_LONGNAME,
                               "Comma Separated Value (.csv)");
     poDriver->SetMetadataItem(GDAL_DMD_EXTENSION, "csv");
@@ -374,6 +387,7 @@ void RegisterOGRCSV()
 "    <Value>AUTO</Value>"
 "  </Option>"
 "  <Option name='EMPTY_STRING_AS_NULL' type='boolean' description='Whether to consider empty strings as null fields on reading' default='NO'/>"
+"  <Option name='MAX_LINE_SIZE' type='int' description='Maximum number of bytes for a line (-1=unlimited)' default='" STRINGIFY(OGR_CSV_DEFAULT_MAX_LINE_SIZE) "'/>"
 "</OpenOptionList>");
 
     poDriver->SetMetadataItem(GDAL_DCAP_VIRTUALIO, "YES");

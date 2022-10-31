@@ -36,7 +36,6 @@
 
 #include <mutex>
 
-CPL_CVSID("$Id$")
 
 #ifndef SQLColumns_TABLE_CAT
 #define SQLColumns_TABLE_CAT 1
@@ -1158,30 +1157,21 @@ int CPLODBCStatement::Fetch( int nOrientation, int nOffset )
     if( nOrientation == SQL_FETCH_NEXT && nOffset == 0 )
     {
         nRetCode = SQLFetch( m_hStmt );
-        if( Failed(nRetCode) )
-        {
-            if( nRetCode != SQL_NO_DATA )
-            {
-                CPLError( CE_Failure, CPLE_AppDefined, "%s",
-                          m_poSession->GetLastError() );
-            }
-            return FALSE;
-        }
     }
     else
     {
         nRetCode = SQLFetchScroll(m_hStmt,
                                   static_cast<SQLSMALLINT>(nOrientation),
                                   nOffset);
-        if( Failed(nRetCode) )
+    }
+    if( Failed(nRetCode) )
+    {
+        if( nRetCode != SQL_NO_DATA )
         {
-            if( nRetCode == SQL_NO_DATA )
-            {
-                CPLError( CE_Failure, CPLE_AppDefined, "%s",
-                          m_poSession->GetLastError() );
-            }
-            return FALSE;
+            CPLError( CE_Failure, CPLE_AppDefined, "%s",
+                      m_poSession->GetLastError() );
         }
+        return FALSE;
     }
 
 /* -------------------------------------------------------------------- */
@@ -1270,7 +1260,7 @@ int CPLODBCStatement::Fetch( int nOrientation, int nOffset )
         // Assume big result: should check for state=SQLSATE 01004.
         else if( nRetCode == SQL_SUCCESS_WITH_INFO )
         {
-            if( cbDataLen >= static_cast<CPL_SQLLEN>(sizeof(szWrkData)-1) )
+          if( cbDataLen >= static_cast<CPL_SQLLEN>(sizeof(szWrkData)-1) || cbDataLen == SQL_NO_TOTAL )
             {
                 cbDataLen = static_cast<CPL_SQLLEN>(sizeof(szWrkData)-1);
                 if( nFetchType == SQL_C_CHAR )
@@ -1576,6 +1566,7 @@ void CPLODBCStatement::ClearColumnData()
 /*                               Failed()                               */
 /************************************************************************/
 
+//! @cond Doxygen_Suppress
 /** Failed */
 int CPLODBCStatement::Failed( int nResultCode )
 
@@ -1585,6 +1576,7 @@ int CPLODBCStatement::Failed( int nResultCode )
 
     return TRUE;
 }
+//! @endcond
 
 /************************************************************************/
 /*                         Append(const char *)                         */

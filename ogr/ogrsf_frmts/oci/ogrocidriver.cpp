@@ -28,7 +28,6 @@
 
 #include "ogr_oci.h"
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                        OGROCIDriverIdentify()                        */
@@ -110,6 +109,10 @@ void RegisterOGROCI()
     poDriver->SetMetadataItem( GDAL_DMD_LONGNAME, "Oracle Spatial" );
     poDriver->SetMetadataItem( GDAL_DMD_HELPTOPIC, "drivers/vector/oci.html" );
     poDriver->SetMetadataItem( GDAL_DCAP_VECTOR, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_LAYER, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_DELETE_LAYER, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_FIELD, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_Z_GEOMETRIES, "YES" );
     poDriver->SetMetadataItem( GDAL_DMD_CONNECTION_PREFIX, "OCI:" );
     poDriver->SetMetadataItem( GDAL_DMD_OPENOPTIONLIST,
 "<OpenOptionList>"

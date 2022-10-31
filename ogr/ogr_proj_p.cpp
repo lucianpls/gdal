@@ -38,6 +38,9 @@
 #ifndef _WIN32
 #include <sys/types.h>
 #include <unistd.h>
+#if defined(HAVE_PTHREAD_ATFORK)
+#include <pthread.h>
+#endif
 #endif
 
 #include <mutex>
@@ -74,6 +77,14 @@ static int g_projNetworkEnabled = -1;
 static unsigned g_projNetworkEnabledGenerationCounter = 0;
 #endif
 
+#if !defined(_WIN32) && defined(HAVE_PTHREAD_ATFORK)
+static bool g_bForkOccurred = false;
+static void ForkOccurred(void)
+{
+    g_bForkOccurred = true;
+}
+#endif
+
 struct OSRPJContextHolder
 {
     unsigned searchPathGenerationCounter = 0;
@@ -82,23 +93,34 @@ struct OSRPJContextHolder
     unsigned projNetworkEnabledGenerationCounter = 0;
 #endif
     PJ_CONTEXT* context = nullptr;
-    OSRProjTLSCache oCache{};
+    OSRProjTLSCache oCache;
 #if !defined(_WIN32)
+#if !defined(HAVE_PTHREAD_ATFORK)
     pid_t curpid = 0;
+#endif
 #if defined(SIMUL_OLD_PROJ6) || !(PROJ_VERSION_MAJOR > 6 || PROJ_VERSION_MINOR >= 2)
     std::vector<PJ_CONTEXT*> oldcontexts{};
 #endif
 #endif
 
 #if !defined(_WIN32)
-    OSRPJContextHolder(): curpid(getpid()) { init(); }
+    OSRPJContextHolder(): oCache(init())
+#if !defined(HAVE_PTHREAD_ATFORK)
+        , curpid(getpid())
+#endif
+    {
+#if HAVE_PTHREAD_ATFORK
+        pthread_atfork(nullptr, nullptr, ForkOccurred);
+#endif
+        init();
+    }
 #else
-    OSRPJContextHolder() { init(); }
+    OSRPJContextHolder(): oCache(init()) {}
 #endif
 
     ~OSRPJContextHolder();
 
-    void init();
+    PJ_CONTEXT* init();
     void deinit();
 
 private:
@@ -106,13 +128,14 @@ private:
     OSRPJContextHolder& operator=(const OSRPJContextHolder&) = delete;
 };
 
-void OSRPJContextHolder::init()
+PJ_CONTEXT* OSRPJContextHolder::init()
 {
     if( !context )
     {
         context = proj_context_create();
         proj_log_func (context, nullptr, osr_proj_logger);
     }
+    return context;
 }
 
 
@@ -179,10 +202,18 @@ static OSRPJContextHolder& GetProjTLSContextHolder()
     // In that situation we must make sure *not* to use the same underlying
     // file open descriptor to the sqlite3 database, since seeks&reads in one
     // of the parent or child will affect the other end.
+#if defined(HAVE_PTHREAD_ATFORK)
+    if( g_bForkOccurred )
+#else
     const pid_t curpid = getpid();
     if( curpid != l_projContext.curpid )
+#endif
     {
+#if defined(HAVE_PTHREAD_ATFORK)
+        g_bForkOccurred = false;
+#else
         l_projContext.curpid = curpid;
+#endif
 #if defined(SIMUL_OLD_PROJ6) || !(PROJ_VERSION_MAJOR > 6 || PROJ_VERSION_MINOR >= 2)
         // PROJ < 6.2 ? Recreate new context
         l_projContext.oldcontexts.push_back(l_projContext.context);
@@ -257,24 +288,27 @@ OSRProjTLSCache* OSRGetProjTLSCache()
     return &l_projContext.oCache;
 }
 
-struct OSRPJDeleter
-{
-    void operator()(PJ* pj) const { proj_destroy(pj); }
-};
-
 void OSRProjTLSCache::clear()
 {
     m_oCacheEPSG.clear();
     m_oCacheWKT.clear();
+    m_tlsContext = nullptr;
+}
+
+PJ_CONTEXT* OSRProjTLSCache::GetPJContext()
+{
+    if( m_tlsContext == nullptr )
+        m_tlsContext = OSRGetProjTLSContext();
+    return m_tlsContext;
 }
 
 PJ* OSRProjTLSCache::GetPJForEPSGCode(int nCode, bool bUseNonDeprecated, bool bAddTOWGS84)
 {
-    std::shared_ptr<PJ> cached;
     const EPSGCacheKey key(nCode, bUseNonDeprecated, bAddTOWGS84);
-    if( m_oCacheEPSG.tryGet(key, cached) )
+    auto cached = m_oCacheEPSG.getPtr(key);
+    if( cached )
     {
-        return proj_clone(OSRGetProjTLSContext(), cached.get());
+        return proj_clone(GetPJContext(), cached->get());
     }
     return nullptr;
 }
@@ -282,24 +316,24 @@ PJ* OSRProjTLSCache::GetPJForEPSGCode(int nCode, bool bUseNonDeprecated, bool bA
 void OSRProjTLSCache::CachePJForEPSGCode(int nCode, bool bUseNonDeprecated, bool bAddTOWGS84, PJ* pj)
 {
     const EPSGCacheKey key(nCode, bUseNonDeprecated, bAddTOWGS84);
-    m_oCacheEPSG.insert(key, std::shared_ptr<PJ>(
-                    proj_clone(OSRGetProjTLSContext(), pj), OSRPJDeleter()));
+    m_oCacheEPSG.insert(key, UniquePtrPJ(
+                                proj_clone(GetPJContext(), pj)));
 }
 
 PJ* OSRProjTLSCache::GetPJForWKT(const std::string& wkt)
 {
-    std::shared_ptr<PJ> cached;
-    if( m_oCacheWKT.tryGet(wkt, cached) )
+    auto cached = m_oCacheWKT.getPtr(wkt);
+    if( cached )
     {
-        return proj_clone(OSRGetProjTLSContext(), cached.get());
+        return proj_clone(GetPJContext(), cached->get());
     }
     return nullptr;
 }
 
 void OSRProjTLSCache::CachePJForWKT(const std::string& wkt, PJ* pj)
 {
-    m_oCacheWKT.insert(wkt, std::shared_ptr<PJ>(
-                    proj_clone(OSRGetProjTLSContext(), pj), OSRPJDeleter()));
+    m_oCacheWKT.insert(wkt, UniquePtrPJ(
+                                proj_clone(GetPJContext(), pj)));
 }
 
 /************************************************************************/
@@ -341,7 +375,7 @@ void OSRSetPROJSearchPaths( const char* const * papszPaths )
 char** OSRGetPROJSearchPaths()
 {
     std::lock_guard<std::mutex> oLock(g_oSearchPathMutex);
-    if( g_searchPathGenerationCounter > 0 )
+    if( g_searchPathGenerationCounter > 0 && !g_aosSearchpaths.empty() )
     {
         return CSLDuplicate(g_aosSearchpaths.List());
     }

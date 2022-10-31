@@ -41,7 +41,6 @@
 // Note: JPEG_DIRECT_COPY is not defined by default, because it is mainly
 // useful for debugging purposes.
 
-CPL_CVSID("$Id$")
 
 #if defined(JPEG_DIRECT_COPY) || defined(HAVE_LIBJPEG)
 
@@ -260,6 +259,12 @@ CPLErr GTIFF_DirectCopyFromJPEG( GDALDataset* poDS, GDALDataset* poSrcDS,
  */
 #if defined(D_MAX_DATA_UNITS_IN_MCU)
 #define width_in_blocks width_in_data_units
+#endif
+
+#ifdef EXPECTED_JPEG_LIB_VERSION
+#if EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#error EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#endif
 #endif
 
 /************************************************************************/

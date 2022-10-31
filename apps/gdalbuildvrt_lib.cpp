@@ -60,7 +60,6 @@
 #include "ogr_spatialref.h"
 #include "vrtdataset.h"
 
-CPL_CVSID("$Id$")
 
 #define GEOTRSFRM_TOPLEFT_X            0
 #define GEOTRSFRM_WE_RES               1
@@ -148,15 +147,15 @@ static int  GetSrcDstWin(DatasetProperty* psDP,
     /* Check that the destination bounding box intersects the source bounding box */
     if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_X] +
          psDP->nRasterXSize *
-         psDP->adfGeoTransform[GEOTRSFRM_WE_RES] < minX )
+         psDP->adfGeoTransform[GEOTRSFRM_WE_RES] <= minX )
          return FALSE;
-    if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_X] > maxX )
+    if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_X] >= maxX )
          return FALSE;
     if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_Y] +
          psDP->nRasterYSize *
-         psDP->adfGeoTransform[GEOTRSFRM_NS_RES] > maxY )
+         psDP->adfGeoTransform[GEOTRSFRM_NS_RES] >= maxY )
          return FALSE;
-    if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_Y] < minY )
+    if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_Y] <= minY )
          return FALSE;
 
     if ( psDP->adfGeoTransform[GEOTRSFRM_TOPLEFT_X] < minX )
@@ -208,7 +207,8 @@ static int  GetSrcDstWin(DatasetProperty* psDP,
         *pdfSrcYSize = *pdfDstYSize / dfSrcToDstYSize;
     }
 
-    return TRUE;
+    return *pdfSrcXSize > 0 && *pdfDstXSize > 0 &&
+           *pdfSrcYSize > 0 && *pdfDstYSize > 0;
 }
 
 /************************************************************************/
@@ -928,6 +928,8 @@ void VRTBuilder::CreateVRTSeparate(VRTDatasetH hVRTDS)
         if (psDatasetProperties->isFileOK == FALSE)
             continue;
 
+        const char* dsFileName = ppszInputFilenames[i];
+
         double dfSrcXOff, dfSrcYOff, dfSrcXSize, dfSrcYSize,
                dfDstXOff, dfDstYOff, dfDstXSize, dfDstYSize;
         if (bHasGeoTransform)
@@ -937,7 +939,12 @@ void VRTBuilder::CreateVRTSeparate(VRTDatasetH hVRTDS)
                         nRasterXSize, nRasterYSize,
                         &dfSrcXOff, &dfSrcYOff, &dfSrcXSize, &dfSrcYSize,
                         &dfDstXOff, &dfDstYOff, &dfDstXSize, &dfDstYSize) )
+            {
+                CPLDebug("BuildVRT",
+                         "Skipping %s as not intersecting area of interest",
+                         dsFileName);
                 continue;
+            }
         }
         else
         {
@@ -945,8 +952,6 @@ void VRTBuilder::CreateVRTSeparate(VRTDatasetH hVRTDS)
             dfSrcXSize = dfDstXSize = nRasterXSize;
             dfSrcYSize = dfDstYSize = nRasterYSize;
         }
-
-        const char* dsFileName = ppszInputFilenames[i];
 
         GDALAddBand(hVRTDS, psDatasetProperties->firstBandType, nullptr);
 
@@ -1005,17 +1010,18 @@ void VRTBuilder::CreateVRTSeparate(VRTDatasetH hVRTDS)
         VRTSimpleSource* poSimpleSource;
         if (bAllowSrcNoData)
         {
-            poSimpleSource = new VRTComplexSource();
+            auto poComplexSource = new VRTComplexSource();
+            poSimpleSource = poComplexSource;
             if (nSrcNoDataCount > 0)
             {
                 if (iBand-1 < nSrcNoDataCount)
-                    poSimpleSource->SetNoDataValue( padfSrcNoData[iBand-1] );
+                    poComplexSource->SetNoDataValue( padfSrcNoData[iBand-1] );
                 else
-                    poSimpleSource->SetNoDataValue( padfSrcNoData[nSrcNoDataCount - 1] );
+                    poComplexSource->SetNoDataValue( padfSrcNoData[nSrcNoDataCount - 1] );
             }
             else if( psDatasetProperties->abHasNoData[0] )
             {
-                poSimpleSource->SetNoDataValue( psDatasetProperties->adfNoDataValues[0] );
+                poComplexSource->SetNoDataValue( psDatasetProperties->adfNoDataValues[0] );
             }
         }
         else if( bUseSrcMaskBand && psDatasetProperties->abHasMaskBand[0] )
@@ -1106,6 +1112,8 @@ void VRTBuilder::CreateVRTNonSeparate(VRTDatasetH hVRTDS)
         if (psDatasetProperties->isFileOK == FALSE)
             continue;
 
+        const char* dsFileName = ppszInputFilenames[i];
+
         double dfSrcXOff;
         double dfSrcYOff;
         double dfSrcXSize;
@@ -1119,7 +1127,12 @@ void VRTBuilder::CreateVRTNonSeparate(VRTDatasetH hVRTDS)
                         nRasterXSize, nRasterYSize,
                         &dfSrcXOff, &dfSrcYOff, &dfSrcXSize, &dfSrcYSize,
                         &dfDstXOff, &dfDstYOff, &dfDstXSize, &dfDstYSize) )
+        {
+            CPLDebug("BuildVRT",
+                     "Skipping %s as not intersecting area of interest",
+                     dsFileName);
             continue;
+        }
 
         anIdxValidDatasets.push_back(i);
 
@@ -1137,8 +1150,6 @@ void VRTBuilder::CreateVRTNonSeparate(VRTDatasetH hVRTDS)
             for( int nOvFactor: psDatasetProperties->anOverviewFactors )
                 anOverviewFactorsSet.insert(nOvFactor);
         }
-
-        const char* dsFileName = ppszInputFilenames[i];
 
         GDALDatasetH hSourceDS;
         bool bDropRef = false;
@@ -1192,8 +1203,9 @@ void VRTBuilder::CreateVRTNonSeparate(VRTDatasetH hVRTDS)
             VRTSimpleSource* poSimpleSource;
             if (bAllowSrcNoData && psDatasetProperties->abHasNoData[nSelBand - 1])
             {
-                poSimpleSource = new VRTComplexSource();
-                poSimpleSource->SetNoDataValue( psDatasetProperties->adfNoDataValues[nSelBand - 1] );
+                auto poComplexSource = new VRTComplexSource();
+                poSimpleSource = poComplexSource;
+                poComplexSource->SetNoDataValue( psDatasetProperties->adfNoDataValues[nSelBand - 1] );
             }
             else if( bUseSrcMaskBand && psDatasetProperties->abHasMaskBand[nSelBand - 1] )
             {
@@ -1289,17 +1301,19 @@ void VRTBuilder::CreateVRTNonSeparate(VRTDatasetH hVRTDS)
             oIter = oIterNext;
         }
     }
-    if( !anOverviewFactorsSet.empty() )
+    if( !anOverviewFactorsSet.empty() &&
+        CPLTestBool(CPLGetConfigOption("VRT_VIRTUAL_OVERVIEWS", "YES")) )
     {
         std::vector<int> anOverviewFactors;
         anOverviewFactors.insert(anOverviewFactors.end(),
                                  anOverviewFactorsSet.begin(),
                                  anOverviewFactorsSet.end());
-        CPLConfigOptionSetter oSetter("VRT_VIRTUAL_OVERVIEWS", "YES", false);
+        const char* const apszOptions [] = { "VRT_VIRTUAL_OVERVIEWS=YES", nullptr };
         poVRTDS->BuildOverviews(pszResampling ? pszResampling : "nearest",
                                 static_cast<int>(anOverviewFactors.size()),
                                 &anOverviewFactors[0],
-                                0, nullptr, nullptr, nullptr);
+                                0, nullptr, nullptr, nullptr,
+                                apszOptions );
     }
 }
 

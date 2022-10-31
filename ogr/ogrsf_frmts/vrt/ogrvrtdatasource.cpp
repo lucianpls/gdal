@@ -49,7 +49,6 @@
 #include "ogrwarpedlayer.h"
 #include "ogrsf_frmts.h"
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                       OGRVRTGetGeometryType()                        */
@@ -918,8 +917,13 @@ bool OGRVRTDataSource::Initialize( CPLXMLNode *psTreeIn, const char *pszNewName,
 int OGRVRTDataSource::TestCapability( const char *pszCap )
 {
     if( EQUAL(pszCap, ODsCCurveGeometries) )
-        return TRUE;
-    return FALSE;
+        return true;
+    else if( EQUAL(pszCap, ODsCZGeometries) )
+        return true;
+    else if( EQUAL(pszCap, ODsCMeasuredGeometries) )
+        return true;
+
+    return false;
 }
 
 /************************************************************************/

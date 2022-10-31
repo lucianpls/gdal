@@ -70,7 +70,12 @@ CPL_C_END
 #include "rawdataset.h"
 #include "vsidataio.h"
 
-CPL_CVSID("$Id$")
+
+#if defined(EXPECTED_JPEG_LIB_VERSION) && !defined(LIBJPEG_12_PATH)
+#if EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#error EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#endif
+#endif
 
 constexpr int TIFF_VERSION = 42;
 
@@ -1821,10 +1826,12 @@ void JPGDatasetCommon::InitInternalOverviews()
 
 CPLErr JPGDatasetCommon::IBuildOverviews( const char *pszResampling,
                                           int nOverviewsListCount,
-                                          int *panOverviewList,
-                                          int nListBands, int *panBandList,
+                                          const int *panOverviewList,
+                                          int nListBands,
+                                          const int *panBandList,
                                           GDALProgressFunc pfnProgress,
-                                          void * pProgressData )
+                                          void * pProgressData,
+                                          CSLConstList papszOptions )
 {
     bHasInitInternalOverviews = true;
     nInternalOverviewsCurrent = 0;
@@ -1833,7 +1840,8 @@ CPLErr JPGDatasetCommon::IBuildOverviews( const char *pszResampling,
                                            nOverviewsListCount,
                                            panOverviewList,
                                            nListBands, panBandList,
-                                           pfnProgress, pProgressData);
+                                           pfnProgress, pProgressData,
+                                           papszOptions);
 }
 
 /************************************************************************/
@@ -2707,6 +2715,7 @@ GDALDataset* JPGDatasetCommon::OpenFLIRRawThermalImage()
 
         auto poRawDS = new JPEGRawDataset(m_nRawThermalImageWidth,
                                             m_nRawThermalImageHeight);
+        poRawDS->SetDescription(osTmpFilename.c_str());
         poRawDS->SetBand(1, poBand);
         poRawDS->MarkSuppressOnClose();
         return poRawDS;
@@ -3649,7 +3658,8 @@ void   JPGAddEXIF        ( GDALDataType eWorkDT,
         }
         CPLErr eErr = GDALRegenerateOverviewsMultiBand(nBands, papoSrcBands,
                                                        1, papapoOverviewBands,
-                                                       "AVERAGE", nullptr, nullptr);
+                                                       "AVERAGE", nullptr, nullptr,
+                                                       /* papszOptions = */ nullptr);
         CPLFree(papoSrcBands);
         for(int i = 0; i < nBands; i++)
         {

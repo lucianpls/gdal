@@ -33,7 +33,6 @@
 #include "ogr_geometry.h"
 #include "ogr_spatialref.h"
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /* ==================================================================== */
@@ -233,7 +232,7 @@ GDALDataset *MAPDataset::Open( GDALOpenInfo * poOpenInfo )
     }
 
     const int nLines = CSLCount( papszLines );
-    if( nLines < 2 )
+    if( nLines < 3 )
     {
         delete poDS;
         CSLDestroy(papszLines);

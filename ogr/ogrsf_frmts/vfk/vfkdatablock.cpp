@@ -37,7 +37,6 @@
 #include "cpl_conv.h"
 #include "cpl_error.h"
 
-CPL_CVSID("$Id$")
 
 /*!
   \brief VFK Data Block constructor
@@ -179,7 +178,7 @@ int IVFKDataBlock::AddProperty(const char *pszName, const char *pszType)
         pszType = "T30";
 
     VFKPropertyDefn *poNewProperty = new VFKPropertyDefn(pszName, pszType,
-                                                         m_poReader->IsLatin2());
+                                                         m_poReader->GetEncoding());
 
     m_nPropertyCount++;
 

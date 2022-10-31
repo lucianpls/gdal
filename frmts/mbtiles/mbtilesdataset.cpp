@@ -41,6 +41,7 @@
 #include "gdalwarper.h"
 #include "mvtutils.h"
 #include "ogrsqlitevfs.h"
+#include "ogrsqlitebase.h"
 
 #include "zlib.h"
 #include "ogrgeojsonreader.h"
@@ -50,7 +51,6 @@
 #include <memory>
 #include <vector>
 
-CPL_CVSID("$Id$")
 
 static const char * const apszAllowedDrivers[] = {"JPEG", "PNG", nullptr};
 
@@ -120,9 +120,10 @@ class MBTilesDataset final: public GDALPamDataset, public GDALGPKGMBTilesLikePse
 
     virtual CPLErr    IBuildOverviews(
                         const char * pszResampling,
-                        int nOverviews, int * panOverviewList,
-                        int nBandsIn, CPL_UNUSED int * panBandList,
-                        GDALProgressFunc pfnProgress, void * pProgressData ) override;
+                        int nOverviews, const int * panOverviewList,
+                        int nBandsIn, const int * /* panBandList */,
+                        GDALProgressFunc pfnProgress, void * pProgressData,
+                        CSLConstList papszOptions ) override;
 
     virtual int                 GetLayerCount() override
                         { return static_cast<int>(m_apoLayers.size()); }
@@ -2395,29 +2396,15 @@ int MBTilesGetBandCountAndTileSize(
     int nBands = -1;
     nTileSize = 0;
 
-    /* Small trick to get the VSILFILE associated with the OGR SQLite */
-    /* DB */
+    /* Get the VSILFILE associated with the OGR SQLite DB */
     CPLString osDSName(OGR_DS_GetName(hDS));
     if (bIsVSICURL)
     {
-        CPLErrorReset();
-        CPLPushErrorHandler(CPLQuietErrorHandler);
-        hSQLLyr = OGR_DS_ExecuteSQL(hDS, "GetVSILFILE()", nullptr, nullptr);
-        CPLPopErrorHandler();
-        CPLErrorReset();
-        if (hSQLLyr != nullptr)
+        auto poDS = dynamic_cast<OGRSQLiteBaseDataSource*>(GDALDataset::FromHandle(hDS));
+        CPLAssert(poDS);
+        if( poDS )
         {
-            hFeat = OGR_L_GetNextFeature(hSQLLyr);
-            if (hFeat)
-            {
-                if (OGR_F_IsFieldSetAndNotNull(hFeat, 0))
-                {
-                    const char* pszPointer = OGR_F_GetFieldAsString(hFeat, 0);
-                    fpCURLOGR = (VSILFILE* )CPLScanPointer( pszPointer, static_cast<int>(strlen(pszPointer)) );
-                }
-                OGR_F_Destroy(hFeat);
-            }
-            OGR_DS_ReleaseResultSet(hDS, hSQLLyr);
+            fpCURLOGR = poDS->GetVSILFILE();
         }
     }
 
@@ -3426,9 +3413,10 @@ static int GetFloorPowerOfTwo(int n)
 
 CPLErr MBTilesDataset::IBuildOverviews(
                         const char * pszResampling,
-                        int nOverviews, int * panOverviewList,
-                        int nBandsIn, int * /*panBandList*/,
-                        GDALProgressFunc pfnProgress, void * pProgressData )
+                        int nOverviews, const int * panOverviewList,
+                        int nBandsIn, const int * /*panBandList*/,
+                        GDALProgressFunc pfnProgress, void * pProgressData,
+                        CSLConstList papszOptions )
 {
     if( GetAccess() != GA_Update )
     {
@@ -3543,7 +3531,8 @@ CPLErr MBTilesDataset::IBuildOverviews(
 
     CPLErr eErr = GDALRegenerateOverviewsMultiBand(nBands, papoBands,
                                      iCurOverview, papapoOverviewBands,
-                                     pszResampling, pfnProgress, pProgressData );
+                                     pszResampling, pfnProgress, pProgressData,
+                                     papszOptions);
 
     for( int iBand = 0; iBand < nBands; iBand++ )
     {
@@ -3666,6 +3655,7 @@ MVT_MBTILES_COMMON_DSCO
     poDriver->SetMetadataItem( GDAL_DCAP_VIRTUALIO, "YES" );
 
 #ifdef HAVE_MVT_WRITE_SUPPORT
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_FIELD, "YES" );
     poDriver->SetMetadataItem( GDAL_DMD_CREATIONFIELDDATATYPES,
                                "Integer Integer64 Real String" );
     poDriver->SetMetadataItem( GDAL_DMD_CREATIONFIELDDATASUBTYPES,

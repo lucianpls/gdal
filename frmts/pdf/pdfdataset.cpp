@@ -54,9 +54,18 @@
 
 #define GDAL_DEFAULT_DPI 150.0
 
+#ifdef HAVE_PDFIUM
+// To be able to use https://github.com/rouault/pdfium_build_gdal_3_5/releases/download/v1_pdfium_5106/install-win10-vs2019-x64-rev5106.zip
+// with newer Visual Studio versions.
+// Trick from https://github.com/conan-io/conan-center-index/issues/4826
+#if _MSC_VER >= 1932 // Visual Studio 2022 version 17.2+
+#    pragma comment(linker, "/alternatename:__imp___std_init_once_complete=__imp_InitOnceComplete")
+#    pragma comment(linker, "/alternatename:__imp___std_init_once_begin_initialize=__imp_InitOnceBeginInitialize")
+#endif
+#endif
+
 /* g++ -fPIC -g -Wall frmts/pdf/pdfdataset.cpp -shared -o gdal_PDF.so -Iport -Igcore -Iogr -L. -lgdal -lpoppler -I/usr/include/poppler */
 
-CPL_CVSID("$Id$")
 
 #ifdef HAVE_PDF_READ_SUPPORT
 
@@ -859,6 +868,18 @@ CPLErr PDFRasterBand::IReadBlockFromTile( int nBlockXOff, int nBlockYOff,
     }
 
     return CE_None;
+}
+
+/************************************************************************/
+/*                     GetSuggestedBlockAccessPattern()                 */
+/************************************************************************/
+
+GDALSuggestedBlockAccessPattern PDFRasterBand::GetSuggestedBlockAccessPattern() const
+{
+    PDFDataset *poGDS = cpl::down_cast<PDFDataset *>(poDS);
+    if (!poGDS->aiTiles.empty() )
+        return GSBAP_RANDOM;
+    return GSBAP_LARGEST_CHUNK_POSSIBLE;
 }
 
 /************************************************************************/
@@ -2338,10 +2359,11 @@ PDFDataset::PDFDataset( PDFDataset* poParentDSIn, int nXSize, int nYSize ) :
 /************************************************************************/
 
 CPLErr PDFDataset::IBuildOverviews( const char *pszResampling,
-                                       int nOverviews, int *panOverviewList,
-                                       int nListBands, int *panBandList,
-                                       GDALProgressFunc pfnProgress,
-                                       void *pProgressData )
+                                    int nOverviews, const int *panOverviewList,
+                                    int nListBands, const int *panBandList,
+                                    GDALProgressFunc pfnProgress,
+                                    void *pProgressData,
+                                    CSLConstList papszOptions )
 
 {
 /* -------------------------------------------------------------------- */
@@ -2358,7 +2380,8 @@ CPLErr PDFDataset::IBuildOverviews( const char *pszResampling,
     return GDALPamDataset::IBuildOverviews( pszResampling,
                                             nOverviews, panOverviewList,
                                             nListBands, panBandList,
-                                            pfnProgress, pProgressData );
+                                            pfnProgress, pProgressData,
+                                            papszOptions );
 }
 
 #endif  // ~ HAVE_PDFIUM
@@ -6593,16 +6616,61 @@ int PDFDataset::ParseMeasure(GDALPDFObject* poMeasure,
 
     OGRSpatialReference oSRS;
     oSRS.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    int bSRSOK = FALSE;
-    if (nEPSGCode != 0 &&
-        oSRS.importFromEPSG(nEPSGCode) == OGRERR_NONE)
+
+    if( poGCSWKT != nullptr )
     {
-        bSRSOK = TRUE;
         CPLFree(pszWKT);
-        pszWKT = nullptr;
-        oSRS.exportToWkt(&pszWKT);
+        pszWKT = CPLStrdup(poGCSWKT->GetString().c_str());
     }
-    else
+
+    bool bSRSOK = false;
+    if (nEPSGCode != 0 )
+    {
+        // At time of writing EPSG CRS codes are <= 32767.
+        // The usual practice is that codes >= 100000 are in the ESRI namespace
+        // instead
+        if( nEPSGCode >= 100000 )
+        {
+            CPLErrorHandlerPusher oHandler(CPLQuietErrorHandler);
+            if( oSRS.SetFromUserInput(CPLSPrintf("ESRI:%d", nEPSGCode)) == OGRERR_NONE )
+            {
+                bSRSOK = true;
+
+                // Check consistency of ESRI:xxxx and WKT definitions
+                if( poGCSWKT != nullptr )
+                {
+                    OGRSpatialReference oSRSFromWKT;
+                    oSRSFromWKT.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+                    if (oSRSFromWKT.importFromWkt(pszWKT) == OGRERR_NONE )
+                    {
+                        if( !EQUAL(oSRS.GetName(), oSRSFromWKT.GetName()) &&
+                            !oSRS.IsSame(&oSRSFromWKT) )
+                        {
+                            CPLDebug("PDF",
+                                     "Definition from ESRI:%d and WKT=%s do not match. Using WKT string",
+                                     nEPSGCode, pszWKT);
+                            bSRSOK = false;
+                        }
+                    }
+                }
+                if( bSRSOK )
+                {
+                    CPLFree(pszWKT);
+                    pszWKT = nullptr;
+                    oSRS.exportToWkt(&pszWKT);
+                }
+            }
+        }
+        else if( oSRS.importFromEPSG(nEPSGCode) == OGRERR_NONE)
+        {
+            bSRSOK = true;
+            CPLFree(pszWKT);
+            pszWKT = nullptr;
+            oSRS.exportToWkt(&pszWKT);
+        }
+    }
+
+    if( !bSRSOK )
     {
         if (poGCSWKT == nullptr)
         {
@@ -6611,12 +6679,6 @@ int PDFDataset::ParseMeasure(GDALPDFObject* poMeasure,
             return FALSE;
         }
 
-        CPLFree(pszWKT);
-        pszWKT = CPLStrdup(poGCSWKT->GetString().c_str());
-    }
-
-    if (!bSRSOK)
-    {
         if (oSRS.importFromWkt(pszWKT) != OGRERR_NONE)
         {
             CPLFree(pszWKT);
@@ -7213,6 +7275,7 @@ void GDALRegister_PDF()
     poDriver->SetDescription( "PDF" );
     poDriver->SetMetadataItem( GDAL_DCAP_RASTER, "YES" );
     poDriver->SetMetadataItem( GDAL_DCAP_VECTOR, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_LAYER, "YES" );
     poDriver->SetMetadataItem( GDAL_DMD_LONGNAME, "Geospatial PDF" );
     poDriver->SetMetadataItem( GDAL_DMD_HELPTOPIC, "drivers/raster/pdf.html" );
     poDriver->SetMetadataItem( GDAL_DMD_EXTENSION, "pdf" );

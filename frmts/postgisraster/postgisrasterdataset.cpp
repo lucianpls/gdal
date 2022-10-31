@@ -41,7 +41,6 @@
 #include <algorithm>
 #include <memory>
 
-CPL_CVSID("$Id$")
 
 #ifdef _WIN32
 #define rint(x) floor((x) + 0.5)
@@ -3000,8 +2999,17 @@ GetConnectionInfo(const char *pszFilename, char **ppszConnectionString,
 #ifdef DEBUG_VERBOSE
     CPLDebug("PostGIS_Raster",
         "PostGISRasterDataset::GetConnectionInfo(): "
-        "Mode: %d\nDbname: %s\nSchema: %s\nTable: %s\nColumn: %s\nWhere: %s\n"
-        "Host: %s\nPort: %s\nUser: %s\nPassword: %s\n"
+        "Mode: %d\n"
+        "Service :%s\n"
+        "Dbname: %s\n"
+        "Schema: %s\n"
+        "Table: %s\n"
+        "Column: %s\n"
+        "Where: %s\n"
+        "Host: %s\n"
+        "Port: %s\n"
+        "User: %s\n"
+        "Password: %s\n"
         "Connection String: %s\n",
         *nMode,
         *ppszService ? *ppszService : "(null)",

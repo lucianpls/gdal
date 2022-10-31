@@ -56,7 +56,6 @@
 
 //! @cond Doxygen_Suppress
 
-CPL_CVSID("$Id$")
 
 /*
 ** Notes on Multithreading:
@@ -143,6 +142,9 @@ class VSIMemHandle final : public VSIVirtualHandle
     int Eof() override;
     int Close() override;
     int Truncate( vsi_l_offset nNewSize ) override;
+
+    bool      HasPRead() const override { return true; }
+    size_t    PRead( void* /*pBuffer*/, size_t /* nSize */, vsi_l_offset /*nOffset*/ ) const override;
 };
 
 /************************************************************************/
@@ -304,7 +306,8 @@ int VSIMemHandle::Close()
     {
 #ifdef DEBUG_VERBOSE
         CPLDebug("VSIMEM", "Closing handle %p on %s: ref_count=%d (before)",
-                 this, poFile->osFilename.c_str(), poFile.use_count());
+                 this, poFile->osFilename.c_str(),
+                 static_cast<int>(poFile.use_count()));
 #endif
         poFile = nullptr;
     }
@@ -401,6 +404,22 @@ size_t VSIMemHandle::Read( void * pBuffer, size_t nSize, size_t nCount )
     m_nOffset += nBytesToRead;
 
     return nCount;
+}
+
+/************************************************************************/
+/*                              PRead()                                 */
+/************************************************************************/
+
+size_t VSIMemHandle::PRead( void* pBuffer, size_t nSize, vsi_l_offset nOffset ) const
+{
+    if( nOffset < poFile->nLength )
+    {
+        const size_t nToCopy = static_cast<size_t>(
+            std::min(static_cast<vsi_l_offset>(poFile->nLength - nOffset), static_cast<vsi_l_offset>(nSize)));
+        memcpy( pBuffer, poFile->pabyData + static_cast<size_t>(nOffset), nToCopy );
+        return nToCopy;
+    }
+    return 0;
 }
 
 /************************************************************************/
@@ -548,7 +567,7 @@ VSIMemFilesystemHandler::Open( const char *pszFilename,
         oFileList[poFile->osFilename] = poFile;
 #ifdef DEBUG_VERBOSE
         CPLDebug("VSIMEM", "Creating file %s: ref_count=%d",
-                 pszFilename, poFile.use_count());
+                 pszFilename, static_cast<int>(poFile.use_count()));
 #endif
         poFile->nMaxLength = nMaxLength;
     }
@@ -580,7 +599,7 @@ VSIMemFilesystemHandler::Open( const char *pszFilename,
 
 #ifdef DEBUG_VERBOSE
     CPLDebug("VSIMEM", "Opening handle %p on %s: ref_count=%d",
-             poHandle, pszFilename, poFile.use_count());
+             poHandle, pszFilename, static_cast<int>(poFile.use_count()));
 #endif
     if( strstr(pszAccess, "a") )
         poHandle->m_nOffset = poFile->nLength;
@@ -663,7 +682,8 @@ int VSIMemFilesystemHandler::Unlink_unlocked( const char * pszFilename )
 
 #ifdef DEBUG_VERBOSE
     std::shared_ptr<VSIMemFile> poFile = oFileList[osFilename];
-    CPLDebug("VSIMEM", "Unlink %s: ref_count=%d (before)", pszFilename, poFile.use_count());
+    CPLDebug("VSIMEM", "Unlink %s: ref_count=%d (before)",
+             pszFilename, static_cast<int>(poFile.use_count()));
 #endif
     oFileList.erase( oFileList.find(osFilename) );
 
@@ -694,7 +714,7 @@ int VSIMemFilesystemHandler::Mkdir( const char * pszPathname,
     oFileList[osPathname] = poFile;
 #ifdef DEBUG_VERBOSE
     CPLDebug("VSIMEM", "Mkdir on %s: ref_count=%d",
-             pszPathname, poFile.use_count());
+             pszPathname, static_cast<int>(poFile.use_count()));
 #endif
     return 0;
 }
@@ -953,7 +973,8 @@ VSILFILE *VSIFileFromMemBuffer( const char *pszFilename,
         poHandler->oFileList[poFile->osFilename] = poFile;
 #ifdef DEBUG_VERBOSE
         CPLDebug("VSIMEM", "VSIFileFromMemBuffer() %s: ref_count=%d (after)",
-                 poFile->osFilename.c_str(), poFile->use_count());
+                 poFile->osFilename.c_str(),
+                 static_cast<int>(poFile.use_count()));
 #endif
     }
 
@@ -1022,7 +1043,8 @@ GByte *VSIGetMemFileBuffer( const char *pszFilename,
         poHandler->oFileList.erase( poHandler->oFileList.find(osFilename) );
 #ifdef DEBUG_VERBOSE
         CPLDebug("VSIMEM", "VSIGetMemFileBuffer() %s: ref_count=%d (before)",
-                 poFile->osFilename.c_str(), poFile.use_count());
+                 poFile->osFilename.c_str(),
+                 static_cast<int>(poFile.use_count()));
 #endif
         poFile->pabyData = nullptr;
         poFile->nLength = 0;

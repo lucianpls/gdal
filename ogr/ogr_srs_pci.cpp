@@ -45,7 +45,6 @@
 #include "ogr_p.h"
 #include "ogr_spatialref.h"
 
-CPL_CVSID("$Id$")
 
 // PCI uses a 16-character string for coordinate system and datum/ellipsoid.
 constexpr int knProjSize = 16;
@@ -1243,7 +1242,7 @@ OGRErr OGRSpatialReference::exportToPCI( char **ppszProj, char **ppszUnits,
                     if( dfScale >= 0.999 && dfScale <= 1.001 )
                         dfScale = (dfScale-1.0) * 1000000.0;
 
-                    if( !CPLIsEqual(adfTOWGS84[6], dfScale) )
+                    if( fabs(adfTOWGS84[6] - dfScale) > 1e-11 * fabs(adfTOWGS84[6]) )
                         bTOWGS84Match = false;
                 }
 

@@ -139,6 +139,29 @@ inline double Clamp(double v, double minV, double maxV)
 }
 
 /************************************************************************/
+/*                    START_ITER_PER_BLOCK()                            */
+/************************************************************************/
+
+#define START_ITER_PER_BLOCK(_rasterXSize, _tileXSize, _rasterYSize, _tileYSize, INIT_YBLOCK, _iXStart, _iXEnd, _iYStart, _iYEnd) \
+{ \
+    const int _nYBlocks = DIV_ROUND_UP(_rasterYSize, _tileYSize); \
+    const int _nXBlocks = DIV_ROUND_UP(_rasterXSize, _tileXSize); \
+    for( int _iYBlock = 0; _iYBlock < _nYBlocks; ++_iYBlock ) \
+    { \
+        const int _iYStart = _iYBlock * _tileYSize; \
+        const int _iYEnd = _iYBlock == _nYBlocks - 1 ? _rasterYSize : _iYStart + _tileYSize; \
+        INIT_YBLOCK; \
+        for( int _iXBlock = 0; _iXBlock < _nXBlocks; ++_iXBlock ) \
+        { \
+            const int _iXStart = _iXBlock * _tileXSize; \
+            const int _iXEnd = _iXBlock == _nXBlocks - 1 ? _rasterXSize : _iXStart + _tileXSize;
+
+#define END_ITER_PER_BLOCK \
+        } \
+    } \
+}
+
+/************************************************************************/
 /*                    GDALGeoLoc::LoadGeolocFinish()                    */
 /************************************************************************/
 
@@ -158,20 +181,27 @@ bool GDALGeoLoc<Accessors>::LoadGeolocFinish( GDALGeoLocTransformInfo *psTransfo
     psTransform->dfMinY = std::numeric_limits<double>::max();
     psTransform->dfMaxY = -std::numeric_limits<double>::max();
 
-    for( int iY = 0; iY < psTransform->nGeoLocYSize; iY++ )
+    constexpr int TILE_SIZE = GDALGeoLocDatasetAccessors::TILE_SIZE;
+    START_ITER_PER_BLOCK(psTransform->nGeoLocXSize, TILE_SIZE,
+                         psTransform->nGeoLocYSize, TILE_SIZE, (void)0,
+                         iXStart, iXEnd, iYStart, iYEnd)
     {
-        for( int iX = 0; iX < psTransform->nGeoLocXSize; iX++ )
+        for( int iY = iYStart; iY < iYEnd; ++iY)
         {
-            const auto dfX = pAccessors->geolocXAccessor.Get(iX, iY);
-            if( !psTransform->bHasNoData ||
-                 dfX!= psTransform->dfNoDataX )
+            for( int iX = iXStart; iX < iXEnd; ++iX )
             {
-                UpdateMinMax(psTransform,
-                             dfX,
-                             pAccessors->geolocYAccessor.Get(iX, iY));
+                const auto dfX = pAccessors->geolocXAccessor.Get(iX, iY);
+                if( !psTransform->bHasNoData ||
+                     dfX!= psTransform->dfNoDataX )
+                {
+                    UpdateMinMax(psTransform,
+                                 dfX,
+                                 pAccessors->geolocYAccessor.Get(iX, iY));
+                }
             }
         }
     }
+    END_ITER_PER_BLOCK
 
     // Check if the SRS is geographic and the geoloc longitudes are in [-180,180]
     psTransform->bGeographicSRSWithMinus180Plus180LongRange = false;
@@ -763,10 +793,9 @@ int GDALGeoLoc<Accessors>::Transform( void *pTransformArg,
             // The thresholds and radius are rather empirical and have been tuned
             // on the product S5P_TEST_L2__NO2____20190509T220707_20190509T234837_08137_01_010400_20200220T091343.nc
             // that includes the north pole.
+            // Amended with the test case of https://github.com/OSGeo/gdal/issues/5823
             const int nSearchRadius =
-                psTransform->bGeographicSRSWithMinus180Plus180LongRange && fabs(dfGeoY) >= 85 ? 5 :
-                psTransform->bGeographicSRSWithMinus180Plus180LongRange && fabs(dfGeoY) >= 75 ? 3 :
-                psTransform->bGeographicSRSWithMinus180Plus180LongRange && fabs(dfGeoY) >= 65 ? 2 : 1;
+                psTransform->bGeographicSRSWithMinus180Plus180LongRange && fabs(dfGeoY) >= 85 ? 5 : 3;
             const int nGeoLocPixel = static_cast<int>(std::floor(dfGeoLocPixel));
             const int nGeoLocLine = static_cast<int>(std::floor(dfGeoLocLine));
 
@@ -929,7 +958,7 @@ void GDALInverseBilinearInterpolation(const double x,
     const double C = (x1 - x) * (y1 - y3) - (y1 - y) * (x1 - x3);
     const double denom = A - 2 * B + C;
     double s;
-    if( fabs(denom) < 1e-12 )
+    if( fabs(denom) <= 1e-12 )
     {
         // Happens typically when the x_i,y_i points form a rectangle
         s = A / (A-C);
@@ -944,9 +973,21 @@ void GDALInverseBilinearInterpolation(const double x,
         else
             s = s1;
     }
-    const double t = ( (1-s)*(x0-x) + s*(x1-x) ) / ( (1-s)*(x0-x2) + s*(x1-x3) );
 
-    i += t;
+    const double t_denom_x = (1-s)*(x0-x2) + s*(x1-x3);
+    if( fabs(t_denom_x) > 1e-12 )
+    {
+        i += ( (1-s)*(x0-x) + s*(x1-x) ) / t_denom_x;
+    }
+    else
+    {
+        const double t_denom_y = (1-s)*(y0-y2) + s*(y1-y3);
+        if( fabs(t_denom_y) > 1e-12 )
+        {
+            i += ( (1-s)*(y0-y) + s*(y1-y) ) / t_denom_y;
+        }
+    }
+
     j += s;
 }
 
@@ -1101,10 +1142,68 @@ bool GDALGeoLoc<Accessors>::GenerateBackMap( GDALGeoLocTransformInfo *psTransfor
     // dense way that if the geolocation array expressed an affine transformation,
     // we would hit every node of the backmap.
     const double dfStep = 1. / psTransform->dfOversampleFactor;
-    for( double dfY = -dfStep; dfY <= static_cast<double>(nYSize) + 2 * dfStep; dfY += dfStep )
+
+    constexpr int TILE_SIZE = GDALGeoLocDatasetAccessors::TILE_SIZE;
+    const int nYBlocks = DIV_ROUND_UP(nYSize, TILE_SIZE);
+    const int nXBlocks = DIV_ROUND_UP(nXSize, TILE_SIZE);
+
+    // First compute for each block the start end ending floating-point pixel/line
+    // values
+    std::vector<std::pair<double, double>> yStartEnd(nYBlocks + 1);
+    std::vector<std::pair<double, double>> xStartEnd(nXBlocks + 1);
+
     {
-        for( double dfX = -dfStep; dfX <= static_cast<double>(nXSize) + 2 * dfStep; dfX += dfStep )
+        int iYBlockLast = -1;
+        double dfY = -dfStep;
+        for( ; dfY <= static_cast<double>(nYSize) + 2 * dfStep; dfY += dfStep )
         {
+            const int iYBlock = static_cast<int>(dfY / TILE_SIZE);
+            if( iYBlock != iYBlockLast )
+            {
+                CPLAssert(iYBlock == iYBlockLast + 1);
+                if( iYBlockLast >= 0 )
+                    yStartEnd[iYBlockLast].second = dfY + dfStep / 10;
+                yStartEnd[iYBlock].first = dfY;
+                iYBlockLast = iYBlock;
+            }
+        }
+        const int iYBlock = static_cast<int>(dfY / TILE_SIZE);
+        yStartEnd[iYBlock].second = dfY + dfStep / 10;
+    }
+
+    {
+        int iXBlockLast = -1;
+        double dfX = -dfStep;
+        for( ; dfX <= static_cast<double>(nXSize) + 2 * dfStep; dfX += dfStep )
+        {
+            const int iXBlock = static_cast<int>(dfX / TILE_SIZE);
+            if( iXBlock != iXBlockLast )
+            {
+                CPLAssert(iXBlock == iXBlockLast + 1);
+                if( iXBlockLast >= 0 )
+                    xStartEnd[iXBlockLast].second = dfX + dfStep / 10;
+                xStartEnd[iXBlock].first = dfX;
+                iXBlockLast = iXBlock;
+            }
+        }
+        const int iXBlock = static_cast<int>(dfX / TILE_SIZE);
+        xStartEnd[iXBlock].second = dfX + dfStep / 10;
+    }
+
+    for( int iYBlock = 0; iYBlock < nYBlocks; ++iYBlock )
+    {
+      for( int iXBlock = 0; iXBlock < nXBlocks; ++iXBlock )
+      {
+#if 0
+        CPLDebug("Process geoloc block (y=%d,x=%d) for y in [%f, %f] and x in [%f, %f]",
+                 iYBlock, iXBlock,
+                 yStartEnd[iYBlock].first, yStartEnd[iYBlock].second,
+                 xStartEnd[iXBlock].first, xStartEnd[iXBlock].second);
+#endif
+        for( double dfY = yStartEnd[iYBlock].first; dfY < yStartEnd[iYBlock].second; dfY += dfStep )
+        {
+          for( double dfX = xStartEnd[iXBlock].first; dfX < xStartEnd[iXBlock].second; dfX += dfStep )
+          {
             // Use forward geolocation array interpolation to compute the
             // georeferenced position corresponding to (dfX, dfY)
             double dfGeoLocX;
@@ -1273,34 +1372,42 @@ bool GDALGeoLoc<Accessors>::GenerateBackMap( GDALGeoLocTransformInfo *psTransfor
                 UpdateBackmap(iBMX, iBMY + 1, dfX, dfY, tempwt);
             }
 
+          }
         }
+      }
     }
 
 
     //Each pixel in the backmap may have multiple entries.
     //We now go in average it out using the weights
-    for( int iY = 0; iY < nBMYSize; iY++ )
+    START_ITER_PER_BLOCK(nBMXSize, TILE_SIZE,
+                         nBMYSize, TILE_SIZE, (void)0,
+                         iXStart, iXEnd, iYStart, iYEnd)
     {
-        for( int iX = 0; iX < nBMXSize; iX++ )
+        for( int iY = iYStart; iY < iYEnd; ++iY)
         {
-            //Check if pixel was only touch during neighbor scan
-            //But no real weight was added as source point matched
-            //backmap grid node
-            const auto weight = pAccessors->backMapWeightAccessor.Get(iX, iY);
-            if (weight > 0)
+            for( int iX = iXStart; iX < iXEnd; ++iX )
             {
-                pAccessors->backMapXAccessor.Set(iX, iY,
-                    pAccessors->backMapXAccessor.Get(iX, iY) / weight);
-                pAccessors->backMapYAccessor.Set(iX, iY,
-                    pAccessors->backMapYAccessor.Get(iX, iY) / weight);
-            }
-            else
-            {
-                pAccessors->backMapXAccessor.Set(iX, iY, INVALID_BMXY);
-                pAccessors->backMapYAccessor.Set(iX, iY, INVALID_BMXY);
+                //Check if pixel was only touch during neighbor scan
+                //But no real weight was added as source point matched
+                //backmap grid node
+                const auto weight = pAccessors->backMapWeightAccessor.Get(iX, iY);
+                if (weight > 0)
+                {
+                    pAccessors->backMapXAccessor.Set(iX, iY,
+                        pAccessors->backMapXAccessor.Get(iX, iY) / weight);
+                    pAccessors->backMapYAccessor.Set(iX, iY,
+                        pAccessors->backMapYAccessor.Get(iX, iY) / weight);
+                }
+                else
+                {
+                    pAccessors->backMapXAccessor.Set(iX, iY, INVALID_BMXY);
+                    pAccessors->backMapYAccessor.Set(iX, iY, INVALID_BMXY);
+                }
             }
         }
     }
+    END_ITER_PER_BLOCK
 
     pAccessors->FreeWghtsBackMap();
 
@@ -1344,36 +1451,57 @@ bool GDALGeoLoc<Accessors>::GenerateBackMap( GDALGeoLocTransformInfo *psTransfor
     }
 #endif
 
-    // A final hole filling logic, proceeding line by line, and feeling
+    // A final hole filling logic, proceeding line by line, and filling
     // holes when the backmap values surrounding the hole are close enough.
-    for( int iBMY = 0; iBMY < nBMYSize; iBMY++ )
+    struct LastValidStruct
     {
-        int iLastValidIX = -1;
-        for( int iBMX = 0; iBMX < nBMXSize; iBMX++ )
+        int iX = -1;
+        float bmX = 0;
+    };
+    std::vector<LastValidStruct> lastValid(TILE_SIZE);
+    const auto reinitLine = [&lastValid]() { const size_t nSize = lastValid.size(); lastValid.clear(); lastValid.resize(nSize); };
+    START_ITER_PER_BLOCK(nBMXSize, TILE_SIZE,
+                         nBMYSize, TILE_SIZE,
+                         reinitLine(),
+                         iXStart, iXEnd, iYStart, iYEnd)
+    {
+        const int iYCount = iYEnd - iYStart;
+        for( int iYIter = 0; iYIter < iYCount; ++iYIter)
         {
-            if( pAccessors->backMapXAccessor.Get(iBMX, iBMY) == INVALID_BMXY )
-                continue;
-            if( iLastValidIX != -1 &&
-                iBMX > iLastValidIX + 1 &&
-                fabs( pAccessors->backMapXAccessor.Get(iBMX, iBMY) -
-                      pAccessors->backMapXAccessor.Get(iLastValidIX, iBMY)) <= 2 &&
-                fabs( pAccessors->backMapYAccessor.Get(iBMX, iBMY) -
-                      pAccessors->backMapYAccessor.Get(iLastValidIX, iBMY)) <= 2 )
+            int iLastValidIX = lastValid[iYIter].iX;
+            float bmXLastValid = lastValid[iYIter].bmX;
+            const int iBMY = iYStart + iYIter;
+            for( int iBMX = iXStart; iBMX < iXEnd; ++iBMX )
             {
-                for( int iBMXInner = iLastValidIX + 1; iBMXInner < iBMX; ++iBMXInner )
+                const float bmX = pAccessors->backMapXAccessor.Get(iBMX, iBMY);
+                if( bmX == INVALID_BMXY )
+                    continue;
+                if( iLastValidIX != -1 &&
+                    iBMX > iLastValidIX + 1 &&
+                    fabs( bmX - bmXLastValid) <= 2 )
                 {
-                    const float alpha = static_cast<float>(iBMXInner - iLastValidIX) / (iBMX - iLastValidIX);
-                    pAccessors->backMapXAccessor.Set(iBMXInner, iBMY,
-                        (1.0f - alpha) * pAccessors->backMapXAccessor.Get(iLastValidIX, iBMY) +
-                        alpha * pAccessors->backMapXAccessor.Get(iBMX, iBMY));
-                    pAccessors->backMapYAccessor.Set(iBMXInner, iBMY,
-                        (1.0f - alpha) * pAccessors->backMapYAccessor.Get(iLastValidIX, iBMY) +
-                        alpha * pAccessors->backMapYAccessor.Get(iBMX, iBMY));
+                    const float bmY = pAccessors->backMapYAccessor.Get(iBMX, iBMY);
+                    const float bmYLastValid = pAccessors->backMapYAccessor.Get(iLastValidIX, iBMY);
+                    if( fabs( bmY - bmYLastValid) <= 2 )
+                    {
+                        for( int iBMXInner = iLastValidIX + 1; iBMXInner < iBMX; ++iBMXInner )
+                        {
+                            const float alpha = static_cast<float>(iBMXInner - iLastValidIX) / (iBMX - iLastValidIX);
+                            pAccessors->backMapXAccessor.Set(iBMXInner, iBMY,
+                                (1.0f - alpha) * bmXLastValid + alpha * bmX);
+                            pAccessors->backMapYAccessor.Set(iBMXInner, iBMY,
+                                (1.0f - alpha) * bmYLastValid + alpha * bmY);
+                        }
+                    }
                 }
+                iLastValidIX = iBMX;
+                bmXLastValid = bmX;
             }
-            iLastValidIX = iBMX;
+            lastValid[iYIter].iX = iLastValidIX;
+            lastValid[iYIter].bmX = bmXLastValid;
         }
     }
+    END_ITER_PER_BLOCK
 
 #ifdef DEBUG_GEOLOC
     if( CPLTestBool(CPLGetConfigOption("GEOLOC_DUMP", "NO")) )
@@ -1448,11 +1576,130 @@ void* GDALCreateSimilarGeoLocTransformer( void *hTransformArg,
 }
 
 /************************************************************************/
+/*                  GDALCreateGeolocationMetadata()                     */
+/************************************************************************/
+
+/** Synthetize the content of a GEOLOCATION metadata domain from a
+ *  geolocation dataset.
+ *
+ *  This is used when doing gdalwarp -to GEOLOC_ARRAY=some.tif
+ */
+CPLStringList GDALCreateGeolocationMetadata( GDALDatasetH hBaseDS,
+                                             const char* pszGeolocationDataset,
+                                             bool bIsSource )
+{
+    CPLStringList aosMD;
+
+    // Open geolocation dataset
+    auto poGeolocDS = std::unique_ptr<GDALDataset>(GDALDataset::Open(
+        pszGeolocationDataset, GDAL_OF_RASTER));
+    if( poGeolocDS == nullptr )
+    {
+        CPLError(CE_Failure, CPLE_AppDefined,
+                 "Invalid dataset: %s", pszGeolocationDataset);
+        return CPLStringList();
+    }
+    const int nGeoLocXSize = poGeolocDS->GetRasterXSize();
+    const int nGeoLocYSize = poGeolocDS->GetRasterYSize();
+    if( nGeoLocXSize == 0 || nGeoLocYSize == 0 )
+    {
+        CPLError(CE_Failure, CPLE_AppDefined,
+                 "Invalid dataset dimension for %s: %dx%d",
+                 pszGeolocationDataset, nGeoLocXSize, nGeoLocYSize);
+        return CPLStringList();
+    }
+
+    // Import the GEOLOCATION metadata from the geolocation dataset, if existing
+    auto papszGeolocMDFromGeolocDS = poGeolocDS->GetMetadata("GEOLOCATION");
+    if( papszGeolocMDFromGeolocDS )
+        aosMD = CSLDuplicate(papszGeolocMDFromGeolocDS);
+
+    aosMD.SetNameValue("X_DATASET", pszGeolocationDataset);
+    aosMD.SetNameValue("Y_DATASET", pszGeolocationDataset);
+
+    // Set X_BAND, Y_BAND to 1, 2 if they are not specified in the initial
+    // GEOLOC metadata domain.and the geolocation dataset has 2 bands.
+    if( aosMD.FetchNameValue("X_BAND") == nullptr &&
+        aosMD.FetchNameValue("Y_BAND") == nullptr )
+    {
+        if( poGeolocDS->GetRasterCount() != 2 )
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "Expected 2 bands for %s. Got %d",
+                     pszGeolocationDataset, poGeolocDS->GetRasterCount());
+            return CPLStringList();
+        }
+        aosMD.SetNameValue("X_BAND", "1");
+        aosMD.SetNameValue("Y_BAND", "2");
+    }
+
+    // Set the geoloc SRS from the geolocation dataset SRS if there's no
+    // explicit one in the initial GEOLOC metadata domain.
+    if( aosMD.FetchNameValue("SRS") == nullptr )
+    {
+        auto poSRS = poGeolocDS->GetSpatialRef();
+        if( poSRS )
+        {
+            char* pszWKT = nullptr;
+            poSRS->exportToWkt(&pszWKT);
+            aosMD.SetNameValue("SRS", pszWKT);
+            CPLFree(pszWKT);
+        }
+    }
+    if( aosMD.FetchNameValue("SRS") == nullptr )
+    {
+        aosMD.SetNameValue("SRS", SRS_WKT_WGS84_LAT_LONG);
+    }
+
+    // Set default values for PIXEL/LINE_OFFSET/STEP if not present.
+    if( aosMD.FetchNameValue("PIXEL_OFFSET") == nullptr )
+        aosMD.SetNameValue("PIXEL_OFFSET", "0");
+
+    if( aosMD.FetchNameValue("LINE_OFFSET") == nullptr )
+        aosMD.SetNameValue("LINE_OFFSET", "0");
+
+    if( aosMD.FetchNameValue("PIXEL_STEP") == nullptr )
+    {
+        aosMD.SetNameValue("PIXEL_STEP",
+           CPLSPrintf("%.18g",
+            static_cast<double>(GDALGetRasterXSize(hBaseDS)) / nGeoLocXSize));
+    }
+
+    if( aosMD.FetchNameValue("LINE_STEP") == nullptr )
+    {
+        aosMD.SetNameValue("LINE_STEP",
+           CPLSPrintf("%.18g",
+            static_cast<double>(GDALGetRasterYSize(hBaseDS)) / nGeoLocYSize));
+    }
+
+    if( aosMD.FetchNameValue("GEOREFERENCING_CONVENTION") == nullptr )
+    {
+        const char* pszConvention = poGeolocDS->GetMetadataItem("GEOREFERENCING_CONVENTION");
+        if( pszConvention )
+            aosMD.SetNameValue("GEOREFERENCING_CONVENTION", pszConvention);
+    }
+
+    std::string osDebugMsg;
+    osDebugMsg = "Synthetized GEOLOCATION metadata for ";
+    osDebugMsg += bIsSource ? "source" : "target";
+    osDebugMsg += ":\n";
+    for( int i = 0; i < aosMD.size(); ++i )
+    {
+        osDebugMsg += "  ";
+        osDebugMsg += aosMD[i];
+        osDebugMsg += '\n';
+    }
+    CPLDebug("GEOLOC", "%s", osDebugMsg.c_str());
+
+    return aosMD;
+}
+
+/************************************************************************/
 /*                    GDALCreateGeoLocTransformer()                     */
 /************************************************************************/
 
 void *GDALCreateGeoLocTransformerEx( GDALDatasetH hBaseDS,
-                                     char **papszGeolocationInfo,
+                                     CSLConstList papszGeolocationInfo,
                                      int bReversed,
                                      const char* pszSourceDataset,
                                      CSLConstList papszTransformOptions )
@@ -1682,7 +1929,17 @@ void *GDALCreateGeoLocTransformerEx( GDALDatasetH hBaseDS,
     if( pszUseTempDatasets )
         psTransform->bUseArray = !CPLTestBool(pszUseTempDatasets);
     else
+    {
         psTransform->bUseArray = nXSize < 16 * 1000 * 1000 / nYSize;
+        if( psTransform->bUseArray )
+        {
+            CPLDebug("GEOLOC",
+                     "Using temporary GTiff backing to store backmap, because "
+                     "geoloc arrays exceed 16 megapixels. You can set the "
+                     "GDAL_GEOLOC_USE_TEMP_DATASETS configuration option to "
+                     "NO to force RAM storage of backmap");
+        }
+    }
 
     if( psTransform->bUseArray )
     {

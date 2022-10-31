@@ -65,7 +65,6 @@
 #define UNUSED_IF_NO_GEOS
 #endif
 
-CPL_CVSID("$Id$")
 
 /************************************************************************/
 /*                           createFromWkb()                            */
@@ -1400,8 +1399,9 @@ OGRGeometry* OGRGeometryFactory::removeLowerDimensionSubGeoms( const OGRGeometry
     }
     OGRGeometryCollection* poRet =
         (nMaxDim == 0) ?               static_cast<OGRGeometryCollection*>(new OGRMultiPoint()) :
-        (nMaxDim == 1 && !bHasCurve) ? static_cast<OGRGeometryCollection*>(new OGRMultiLineString()) :
-        (nMaxDim == 1 && bHasCurve) ?  static_cast<OGRGeometryCollection*>(new OGRMultiCurve()) :
+        (nMaxDim == 1) ?
+             (!bHasCurve ? static_cast<OGRGeometryCollection*>(new OGRMultiLineString()) :
+                           static_cast<OGRGeometryCollection*>(new OGRMultiCurve())) :
         (nMaxDim == 2 && !bHasCurve) ? static_cast<OGRGeometryCollection*>(new OGRMultiPolygon()) :
                                        static_cast<OGRGeometryCollection*>(new OGRMultiSurface());
     for( const auto poSubGeom: *poGC )
@@ -2956,16 +2956,21 @@ static void CutGeometryOnDateLineAndAddToMulti( OGRGeometryCollection* poMulti,
                 {
                     double dfMaxSmallDiffLong = 0;
                     bool bHasBigDiff = false;
-                    bool bOnlyAtPlusMinus180 = poLS->getNumPoints() > 0 &&
+                    // If one longitude is at +/- 180deg, assume that the
+                    // geometry was properly cut.
+                    bool bLongFoundAtPlusMinus180 = poLS->getNumPoints() > 0 &&
                         ( fabs(fabs(poLS->getX(0)) - 180) < 1e-10 );
                     // Detect big gaps in longitude.
-                    for( int i = 1; i < poLS->getNumPoints(); i++ )
+                    for( int i = 1; !bLongFoundAtPlusMinus180 && i < poLS->getNumPoints(); i++ )
                     {
                         const double dfPrevX = poLS->getX(i-1) + dfXOffset;
                         const double dfX = poLS->getX(i) + dfXOffset;
                         const double dfDiffLong = fabs(dfX - dfPrevX);
-                        if( fabs(fabs(poLS->getX(i)) - 180) > 1e-10 )
-                            bOnlyAtPlusMinus180 = false;
+                        if( fabs(fabs(poLS->getX(i)) - 180) < 1e-10 )
+                        {
+                            bLongFoundAtPlusMinus180 = true;
+                            break;
+                        }
 
                         if( dfDiffLong > dfDiffSpace &&
                             ((dfX > dfLeftBorderX &&
@@ -2976,7 +2981,7 @@ static void CutGeometryOnDateLineAndAddToMulti( OGRGeometryCollection* poMulti,
                         else if( dfDiffLong > dfMaxSmallDiffLong )
                             dfMaxSmallDiffLong = dfDiffLong;
                     }
-                    if( bHasBigDiff && !bOnlyAtPlusMinus180 &&
+                    if( bHasBigDiff && !bLongFoundAtPlusMinus180 &&
                         dfMaxSmallDiffLong < dfDateLineOffset )
                     {
                         if( eGeomType == wkbLineString )

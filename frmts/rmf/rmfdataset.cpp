@@ -36,7 +36,6 @@
 
 #include "cpl_safemaths.hpp"
 
-CPL_CVSID("$Id$")
 
 constexpr int RMF_DEFAULT_BLOCKXSIZE = 256;
 constexpr int RMF_DEFAULT_BLOCKYSIZE = 256;
@@ -2272,10 +2271,11 @@ RMFDataset* RMFDataset::OpenOverview(RMFDataset* poParent, GDALOpenInfo* poOpenI
 }
 
 CPLErr RMFDataset::IBuildOverviews( const char* pszResampling,
-                                    int nOverviews, int* panOverviewList,
-                                    int nBandsIn, int* panBandList,
+                                    int nOverviews, const int* panOverviewList,
+                                    int nBandsIn, const int* panBandList,
                                     GDALProgressFunc pfnProgress,
-                                    void* pProgressData )
+                                    void* pProgressData,
+                                    CSLConstList papszOptions )
 {
     bool bUseGenericHandling = false;
 
@@ -2301,7 +2301,8 @@ CPLErr RMFDataset::IBuildOverviews( const char* pszResampling,
 
         return GDALDataset::IBuildOverviews(
             pszResampling, nOverviews, panOverviewList,
-            nBandsIn, panBandList, pfnProgress, pProgressData );
+            nBandsIn, panBandList, pfnProgress, pProgressData,
+            papszOptions);
     }
 
     if( nBandsIn != GetRasterCount() )
@@ -2319,7 +2320,8 @@ CPLErr RMFDataset::IBuildOverviews( const char* pszResampling,
         {
             return GDALDataset::IBuildOverviews(
                 pszResampling, nOverviews, panOverviewList,
-                nBandsIn, panBandList, pfnProgress, pProgressData );
+                nBandsIn, panBandList, pfnProgress, pProgressData,
+                papszOptions);
         }
         return CleanOverviews();
     }
@@ -2403,7 +2405,7 @@ CPLErr RMFDataset::IBuildOverviews( const char* pszResampling,
     res = GDALRegenerateOverviewsMultiBand( nBandsIn, papoBandList,
                                             nOverviews, papapoOverviewBands,
                                             pszResampling, pfnProgress,
-                                            pProgressData );
+                                            pProgressData, papszOptions );
 
     for( int iBand = 0; iBand < nBandsIn; ++iBand )
     {

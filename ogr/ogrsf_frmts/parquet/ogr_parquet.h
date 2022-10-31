@@ -85,6 +85,7 @@ class OGRParquetLayer final: public OGRParquetLayerBase
         CPLStringList                               m_aosFeatherMetadata{};
 
         void               EstablishFeatureDefn();
+        bool               CreateRecordBatchReader(int iStartingRowGroup);
         bool               ReadNextBatch() override;
         OGRwkbGeometryType ComputeGeometryColumnType(int iGeomCol, int iParquetCol) const;
         void               CreateFieldFromSchema(
@@ -114,6 +115,12 @@ public:
         const char*     GetMetadataItem( const char* pszName,
                                          const char* pszDomain = "" ) override;
         char**          GetMetadata( const char* pszDomain = "" ) override;
+        OGRErr          SetNextByIndex( GIntBig nIndex ) override;
+
+        GDALDataset*    GetDataset() override;
+        bool            GetArrowStream(struct ArrowArrayStream* out_stream,
+                                       CSLConstList papszOptions = nullptr) override;
+
 
         std::unique_ptr<OGRFieldDomain> BuildDomain(const std::string& osDomainName,
                                                     int iFieldIndex) const override;
@@ -167,12 +174,14 @@ public:
 class OGRParquetDataset final: public OGRArrowDataset
 {
 public:
-    explicit OGRParquetDataset(std::unique_ptr<arrow::MemoryPool>&& poMemoryPool);
+    explicit OGRParquetDataset(const std::shared_ptr<arrow::MemoryPool>& poMemoryPool);
 
     OGRLayer*            ExecuteSQL( const char *pszSQLCommand,
                                      OGRGeometry *poSpatialFilter,
                                      const char *pszDialect ) override;
     void                 ReleaseResultSet( OGRLayer * poResultsSet ) override;
+
+    int TestCapability( const char * ) override;
 };
 
 /************************************************************************/

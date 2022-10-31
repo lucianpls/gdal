@@ -33,7 +33,6 @@
 #include "cpl_error.h"
 #include "cpl_multiproc.h"
 
-CPL_CVSID("$Id$")
 
 using kmldom::KmlFactory;
 
@@ -212,6 +211,10 @@ void RegisterOGRLIBKML()
 
     poDriver->SetDescription( "LIBKML" );
     poDriver->SetMetadataItem( GDAL_DCAP_VECTOR, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_LAYER, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_DELETE_LAYER, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_CREATE_FIELD, "YES" );
+    poDriver->SetMetadataItem( GDAL_DCAP_Z_GEOMETRIES, "YES" );
     poDriver->SetMetadataItem( GDAL_DMD_LONGNAME,
                                "Keyhole Markup Language (LIBKML)" );
     poDriver->SetMetadataItem( GDAL_DMD_EXTENSIONS, "kml kmz" );

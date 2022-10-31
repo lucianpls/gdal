@@ -32,7 +32,6 @@
 #include "cpl_conv.h"
 #include "cpl_string.h"
 
-CPL_CVSID("$Id$")
 
 /*!
   \brief OGRVFKLayer constructor
@@ -90,6 +89,9 @@ int OGRVFKLayer::TestCapability(const char * pszCap)
 {
     if (EQUAL(pszCap, OLCRandomRead)) {
         return TRUE; /* ? */
+    }
+    if (EQUAL(pszCap, OLCStringsAsUTF8)) {
+        return TRUE;
     }
 
     return FALSE;

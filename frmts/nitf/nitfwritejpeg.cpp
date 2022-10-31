@@ -35,7 +35,6 @@
 #include "cpl_port.h"
 #include "gdal_pam.h"
 
-CPL_CVSID("$Id$")
 
 CPL_C_START
 #ifdef LIBJPEG_12_PATH
@@ -44,6 +43,12 @@ CPL_C_START
 #  include "jpeglib.h"
 #endif
 CPL_C_END
+
+#if defined(EXPECTED_JPEG_LIB_VERSION) && !defined(LIBJPEG_12_PATH)
+#if EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#error EXPECTED_JPEG_LIB_VERSION != JPEG_LIB_VERSION
+#endif
+#endif
 
 /*
 * Do we want to do special processing suitable for when JSAMPLE is a

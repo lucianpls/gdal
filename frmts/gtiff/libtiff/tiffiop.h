@@ -118,7 +118,8 @@ struct tiff {
 	uint64_t               tif_diroff;       /* file offset of current directory */
 	uint64_t               tif_nextdiroff;   /* file offset of following directory */
 	uint64_t               tif_lastdiroff;   /* file offset of last directory written so far */
-	uint64_t*              tif_dirlist;      /* list of offsets to already seen directories to prevent IFD looping */
+	uint64_t*              tif_dirlistoff;   /* list of offsets to already seen directories to prevent IFD looping */
+	uint16_t*              tif_dirlistdirn;  /* list of directory numbers to already seen directories to prevent IFD looping */
 	uint16_t               tif_dirlistsize;  /* number of entries in offset list */
 	uint16_t               tif_dirnumber;    /* number of already seen directories */
 	TIFFDirectory        tif_dir;          /* internal rep of current directory */
@@ -365,6 +366,7 @@ extern double _TIFFUInt64ToDouble(uint64_t);
 extern float _TIFFUInt64ToFloat(uint64_t);
 
 extern float _TIFFClampDoubleToFloat(double);
+extern uint32_t _TIFFClampDoubleToUInt32(double);
 
 extern tmsize_t
 _TIFFReadEncodedStripAndAllocBuffer(TIFF* tif, uint32_t strip,
@@ -429,6 +431,8 @@ extern int TIFFInitZSTD(TIFF*, int);
 extern int TIFFInitWebP(TIFF*, int);
 #endif
 extern const TIFFCodec _TIFFBuiltinCODECS[];
+extern void TIFFCIELab16ToXYZ(TIFFCIELabToRGB *, uint32_t l, int32_t a, int32_t b,
+                              float *, float *, float *);
 
 #if defined(__cplusplus)
 }

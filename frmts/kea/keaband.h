@@ -74,7 +74,13 @@ public:
 
     // virtual methods for the no data value
     double GetNoDataValue(int *pbSuccess=nullptr) override;
+    int64_t GetNoDataValueAsInt64(int *pbSuccess=nullptr) override;
+    uint64_t GetNoDataValueAsUInt64(int *pbSuccess=nullptr) override;
+
     CPLErr SetNoDataValue(double dfNoData) override;
+    CPLErr SetNoDataValueAsInt64(int64_t nNoData) override;
+    CPLErr SetNoDataValueAsUInt64(uint64_t nNoData) override;
+
     virtual CPLErr DeleteNoDataValue() override;
 
     // histogram methods
@@ -105,7 +111,7 @@ public:
     // internal methods for overviews
     void readExistingOverviews();
     void deleteOverviewObjects();
-    void CreateOverviews(int nOverviews, int *panOverviewList);
+    void CreateOverviews(int nOverviews, const int *panOverviewList);
     KEAOverview** GetOverviewList() { return m_panOverviewBands; }
 
     kealib::KEALayerType getLayerType() const;

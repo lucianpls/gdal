@@ -123,7 +123,6 @@
 #include "emmintrin.h"
 #endif
 
-CPL_CVSID("$Id$")
 
 static const double kdfDegreesToRadians = M_PI / 180.0;
 static const double kdfRadiansToDegrees = 180.0 / M_PI;
@@ -2012,6 +2011,7 @@ ColorAssociation* GDALColorReliefParseColorFile( GDALRasterBandH hSrcBand,
     {
         CPLError(CE_Failure, CPLE_AppDefined,
                  "No color association found in %s", pszColorFilename);
+        CPLFree(pasColorAssociation);
         *pnColors = 0;
         return nullptr;
     }

@@ -247,8 +247,11 @@ class JPGDatasetCommon CPL_NON_FINAL: public GDALPamDataset
 
     virtual int         CloseDependentDatasets() override;
 
-    virtual CPLErr IBuildOverviews( const char *, int, int *, int, int *,
-                                    GDALProgressFunc, void * ) override;
+    virtual CPLErr IBuildOverviews( const char *,
+                                    int, const int *,
+                                    int, const int *,
+                                    GDALProgressFunc, void *,
+                                    CSLConstList papszOptions ) override;
 
   public:
                  JPGDatasetCommon();
@@ -360,6 +363,9 @@ class JPGRasterBand final: public GDALPamRasterBand
 
     virtual CPLErr IReadBlock( int, int, void * ) override;
     virtual GDALColorInterp GetColorInterpretation() override;
+
+    virtual GDALSuggestedBlockAccessPattern GetSuggestedBlockAccessPattern()
+        const override { return GSBAP_TOP_TO_BOTTOM; }
 
     virtual GDALRasterBand *GetMaskBand() override;
     virtual int             GetMaskFlags() override;

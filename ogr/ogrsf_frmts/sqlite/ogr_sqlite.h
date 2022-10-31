@@ -329,7 +329,8 @@ class OGRSQLiteTableLayer final: public OGRSQLiteLayer
 
     bool                CheckSpatialIndexTable(int iGeomCol);
 
-    CPLErr              EstablishFeatureDefn(const char* pszGeomCol);
+    CPLErr              EstablishFeatureDefn(const char* pszGeomCol,
+                                             bool bMayEmitError);
 
     void                LoadStatistics();
     void                LoadStatisticsSpatialite4DB();
@@ -346,7 +347,8 @@ class OGRSQLiteTableLayer final: public OGRSQLiteLayer
     CPLErr              Initialize( const char *pszTableName,
                                     bool bIsTable,
                                     bool bIsVirtualShapeIn,
-                                    bool bDeferredCreation);
+                                    bool bDeferredCreation,
+                                    bool bMayEmitError );
     void                SetCreationParameters( const char *pszFIDColumnName,
                                                OGRwkbGeometryType eGeomType,
                                                const char *pszGeomFormat,
@@ -611,7 +613,8 @@ class OGRSQLiteDataSource final : public OGRSQLiteBaseDataSource
 
     bool                OpenTable( const char *pszTableName,
                                    bool IsTable,
-                                   bool bIsVirtualShape );
+                                   bool bIsVirtualShape,
+                                   bool bMayEmitError );
     bool                OpenView( const char *pszViewName,
                                    const char *pszViewGeometry,
                                    const char *pszViewRowid,
@@ -651,7 +654,7 @@ class OGRSQLiteDataSource final : public OGRSQLiteBaseDataSource
         return GetSpatialRefFromOldGetProjectionRef();
     }
 
-    char               *LaunderName( const char * );
+    static char        *LaunderName( const char * );
     int                 FetchSRSId( const OGRSpatialReference * poSRS );
     OGRSpatialReference*FetchSRS( int nSRID );
 
@@ -673,6 +676,10 @@ class OGRSQLiteDataSource final : public OGRSQLiteBaseDataSource
     int                 GetUndefinedSRID() const { return m_nUndefinedSRID; }
     bool                HasGeometryColumns() const { return m_bHaveGeometryColumns; }
 
+    std::vector<std::string> GetRelationshipNames(CSLConstList papszOptions = nullptr) const override;
+
+    const GDALRelationship* GetRelationship(const std::string& name) const override;
+
     void                ReloadLayers();
 
 #ifdef HAVE_RASTERLITE2
@@ -682,8 +689,11 @@ class OGRSQLiteDataSource final : public OGRSQLiteBaseDataSource
     const double*       GetGeoTransform() const { return m_adfGeoTransform; }
     bool                IsRL2MixedResolutions() const { return m_bRL2MixedResolutions; }
 
-    virtual CPLErr IBuildOverviews( const char *, int, int *,
-                                    int, int *, GDALProgressFunc, void * ) override;
+    virtual CPLErr IBuildOverviews( const char *,
+                                    int, const int *,
+                                    int, const int *,
+                                    GDALProgressFunc, void *,
+                                    CSLConstList papszOptions ) override;
 
 #endif
     OGRSQLiteDataSource* GetParentDS() const { return m_poParentDS; }

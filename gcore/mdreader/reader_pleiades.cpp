@@ -43,7 +43,6 @@
 #include "cpl_string.h"
 #include "cpl_time.h"
 
-CPL_CVSID("$Id$")
 
 /**
  * GDALMDReaderPleiades()
@@ -86,6 +85,16 @@ GDALMDReaderPleiades::GDALMDReaderPleiades(const char *pszPath,
         &iRow, &iCol) != 2)
     {
         return;
+    }
+
+    // Strip of suffix from PNEO products
+    char* pszLastUnderScore = strrchr(sBaseName, '_');
+    if( pszLastUnderScore &&
+        (EQUAL(pszLastUnderScore, "_P") ||
+         EQUAL(pszLastUnderScore, "_RGB") ||
+         EQUAL(pszLastUnderScore, "_NED")) )
+    {
+        *pszLastUnderScore = 0;
     }
 
     if (CPLCheckForFile(&osIMDSourceFilename[0], papszSiblingFiles))
