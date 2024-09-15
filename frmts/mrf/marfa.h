@@ -145,6 +145,7 @@ extern char const *const *ILOrder_Name;
 
 class MRFDataset;
 class MRFRasterBand;
+class MRFLRasterBand;
 
 typedef struct
 {
@@ -704,6 +705,8 @@ class MRFRasterBand CPL_NON_FINAL : public GDALPamRasterBand
   protected:
     // Pointer to the GDALMRFDataset
     MRFDataset *poMRFDS;
+    // Pointer to the parent band, if this band was opened as a single level
+    MRFLRasterBand *poLevelBand;
     // Deflate page requested, named to avoid conflict with libz deflate()
     int dodeflate;
     int deflate_flags;

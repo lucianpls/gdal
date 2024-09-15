@@ -775,10 +775,15 @@ CPLErr MRFDataset::LevelInit(const int l)
     nRasterYSize = current.size.y;
     nBands = current.size.c;
 
-    // Add the bands, copy constructor so they can be closed independently
+    // Add the bands, including the reverse reference
     for (int i = 1; i <= nBands; i++)
-        SetBand(i, new MRFLRasterBand(reinterpret_cast<MRFRasterBand *>(
-                       cds->GetRasterBand(i)->GetOverview(l))));
+    {
+        auto band = reinterpret_cast<MRFRasterBand *>(
+            cds->GetRasterBand(i)->GetOverview(l));
+        auto this_band = new MRFLRasterBand(band);
+        band->poLevelBand = this_band;
+        SetBand(i, this_band);
+    }
     return CE_None;
 }
 

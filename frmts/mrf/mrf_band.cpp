@@ -425,6 +425,7 @@ static void *ZstdCompBlock(buf_mgr &src, size_t extrasize, int c_level,
 MRFRasterBand::MRFRasterBand(MRFDataset *parent_dataset, const ILImage &image,
                              int band, int ov)
     : poMRFDS(parent_dataset),
+      poLevelBand(nullptr),  // Will get set by LevelInit if needed
       dodeflate(GetOptlist().FetchBoolean("DEFLATE", FALSE)),
       // Bring the quality to 0 to 9
       deflate_flags(image.quality / 10),
@@ -1344,10 +1345,16 @@ CPLErr MRFRasterBand::IWriteBlock(int xblk, int yblk, void *buffer)
         }
         else
         {
-            GDALRasterBand *band = poMRFDS->GetRasterBand(iBand + 1);
+            auto band = poMRFDS->GetRasterBand(iBand + 1);
             // Pick the right overview
             if (m_l)
                 band = band->GetOverview(m_l - 1);
+            // It could be a direct overview level
+            auto direct_band =
+                reinterpret_cast<MRFRasterBand *>(band)->poLevelBand;
+            if (direct_band != nullptr)
+                band = direct_band;
+
             poBlock = (reinterpret_cast<MRFRasterBand *>(band))
                           ->TryGetLockedBlockRef(xblk, yblk);
             if (nullptr == poBlock)
