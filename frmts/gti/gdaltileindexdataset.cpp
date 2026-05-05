@@ -4151,7 +4151,42 @@ bool GDALTileIndexDataset::GetSourceDesc(const std::string &osTileName,
     }
 
     GDALGeoTransform gtTile;
-    if (poTileDS->GetGeoTransform(gtTile) != CE_None)
+    bool bHasGT = poTileDS->GetGeoTransform(gtTile) == CE_None;
+
+    // A bit of a hack to synthetize the geotransform of a PMTiles .png/.jpg/.webp
+    // from the /vsipmtiles/my.pmtiles/{z}/{x}/{y}.ext filename, using GoogleMaps
+    // tiling scheme.
+    if (!bHasGT && cpl::starts_with(osTileName, "/vsipmtiles/") &&
+        poTileDS->GetRasterXSize() > 0 && poTileDS->GetRasterYSize() > 0)
+    {
+        constexpr double SPHERICAL_RADIUS = 6378137.0;
+        constexpr double MAX_GM =
+            SPHERICAL_RADIUS * M_PI;  // 20037508.342789244
+        const auto nPos = CPLString(osTileName).ifind(".pmtiles/");
+        if (nPos != std::string::npos)
+        {
+            const char *pszPMTiles =
+                osTileName.c_str() + nPos + strlen(".pmtiles/");
+            const CPLStringList aosTokens(
+                CSLTokenizeString2(pszPMTiles, "/", 0));
+            if (aosTokens.size() == 3)
+            {
+                const unsigned nZ = atoi(aosTokens[0]);
+                const unsigned nX = atoi(aosTokens[1]);
+                const unsigned nY = atoi(aosTokens[2]);
+                if (nZ <= 31)
+                {
+                    bHasGT = true;
+                    const double dfTileDim = 2 * MAX_GM / (1U << nZ);
+                    gtTile.xorig = -MAX_GM + nX * dfTileDim;
+                    gtTile.xscale = dfTileDim / poTileDS->GetRasterXSize();
+                    gtTile.yorig = MAX_GM - nY * dfTileDim;
+                    gtTile.yscale = -dfTileDim / poTileDS->GetRasterYSize();
+                }
+            }
+        }
+    }
+    if (!bHasGT)
     {
         CPLError(CE_Failure, CPLE_AppDefined, "%s lacks geotransform",
                  osTileName.c_str());

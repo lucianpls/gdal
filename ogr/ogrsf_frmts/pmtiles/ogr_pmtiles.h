@@ -35,6 +35,8 @@
 #define HAVE_MVT_WRITE_SUPPORT
 #endif
 
+constexpr int PMTILES_HEADER_LENGTH = 127;
+
 /************************************************************************/
 /*                          OGRPMTilesDataset                           */
 /************************************************************************/
@@ -54,6 +56,17 @@ class OGRPMTilesDataset final : public GDALDataset
     }
 
     const OGRLayer *GetLayer(int) const override;
+
+    const OGRSpatialReference *GetSpatialRef() const override
+    {
+        return !m_oSRS.IsEmpty() ? &m_oSRS : nullptr;
+    }
+
+    CPLErr GetGeoTransform(GDALGeoTransform &gt) const override
+    {
+        gt = m_gt;
+        return !m_oSRS.IsEmpty() ? CE_None : CE_Failure;
+    }
 
     inline int GetMinZoomLevel() const
     {
@@ -100,8 +113,20 @@ class OGRPMTilesDataset final : public GDALDataset
      */
     const std::string *ReadTileData(uint64_t nOffset, uint64_t nSize);
 
+  protected:
+    friend class GDALPMTilesRasterBand;
+
+    CPLErr IRasterIO(GDALRWFlag eRWFlag, int nXOff, int nYOff, int nXSize,
+                     int nYSize, void *pData, int nBufXSize, int nBufYSize,
+                     GDALDataType eBufType, int nBandCount,
+                     BANDMAP_TYPE panBandMap, GSpacing nPixelSpace,
+                     GSpacing nLineSpace, GSpacing nBandSpace,
+                     GDALRasterIOExtraArg *psExtraArg) override;
+
   private:
-    VSIVirtualHandleUniquePtr m_poFile{};
+    VSIVirtualHandleUniquePtr m_poFileUniquePtr{};
+
+    VSIVirtualHandle *m_poFile = nullptr;
 
     //! PMTiles header
     pmtiles::headerv3 m_sHeader{};
@@ -135,6 +160,29 @@ class OGRPMTilesDataset final : public GDALDataset
     //! Maximum zoom level got from header
     int m_nMaxZoomLevel = 0;
 
+    //! Zoom level got (for raster)
+    int m_nZoomLevel = 0;
+
+    //! CRS (for raster)
+    OGRSpatialReference m_oSRS{};
+
+    //! Geotransform
+    GDALGeoTransform m_gt{};
+
+    //! GeoPackage driver (for raster)
+    GDALDriver *m_poGPKGDriver = nullptr;
+
+    //! Temporary GeoPackage filename (for raster)
+    std::string m_osTmpGPKGFilename{};
+
+    //! Overview datasets
+    std::vector<std::unique_ptr<OGRPMTilesDataset>> m_apoOverviews{};
+
+    bool OpenVector(const GDALOpenInfo *poOpenInfo,
+                    const CPLJSONObject &oJsonRoot, int nZoomLevel);
+
+    bool OpenRaster(int nZoomLevel);
+
     /** Return a short-lived decompressed buffer, or nullptr in case of error
      */
     const std::string *Read(const CPLCompressor *psDecompressor,
@@ -142,6 +190,32 @@ class OGRPMTilesDataset final : public GDALDataset
                             const char *pszDataType);
 
     CPL_DISALLOW_COPY_ASSIGN(OGRPMTilesDataset)
+};
+
+/************************************************************************/
+/*                        GDALPMTilesRasterBand                         */
+/************************************************************************/
+
+class GDALPMTilesRasterBand final : public GDALRasterBand
+{
+  public:
+    GDALPMTilesRasterBand(OGRPMTilesDataset *poDSIn, int nBandIn,
+                          int nBlockSize);
+
+    GDALColorInterp GetColorInterpretation() override;
+
+    int GetOverviewCount() override;
+
+    GDALRasterBand *GetOverview(int) override;
+
+  protected:
+    CPLErr IReadBlock(int nBlockXOff, int nBlockYOff, void *pData) override;
+
+    CPLErr IRasterIO(GDALRWFlag eRWFlag, int nXOff, int nYOff, int nXSize,
+                     int nYSize, void *pData, int nBufXSize, int nBufYSize,
+                     GDALDataType eBufType, GSpacing nPixelSpace,
+                     GSpacing nLineSpace,
+                     GDALRasterIOExtraArg *psExtraArg) override;
 };
 
 /************************************************************************/
@@ -332,6 +406,8 @@ class OGRPMTilesVectorLayer final
 
     CPL_DISALLOW_COPY_ASSIGN(OGRPMTilesVectorLayer)
 };
+
+const char *VSIPMTilesGetTileExtension(OGRPMTilesDataset *poDS);
 
 #ifdef HAVE_MVT_WRITE_SUPPORT
 

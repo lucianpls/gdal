@@ -13,6 +13,7 @@
 #include "cpl_json.h"
 
 #include "ogrsf_frmts.h"
+#include "ogr_pmtiles.h"
 #include "ogrpmtilesfrommbtiles.h"
 
 #include "include_pmtiles.h"
@@ -146,7 +147,7 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
     osMetadata = oMetadataDoc.SaveAsString();
     // CPLDebugOnly("PMTiles", "Metadata = %s", osMetadata.c_str());
 
-    sHeader.root_dir_offset = 127;
+    sHeader.root_dir_offset = PMTILES_HEADER_LENGTH;
     sHeader.root_dir_bytes = 0;
     sHeader.json_metadata_offset = 0;
     sHeader.json_metadata_bytes = 0;

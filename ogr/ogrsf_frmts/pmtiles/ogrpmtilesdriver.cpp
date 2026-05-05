@@ -26,8 +26,11 @@
 
 static int OGRPMTilesDriverIdentify(GDALOpenInfo *poOpenInfo)
 {
-    if (poOpenInfo->nHeaderBytes < 127 || !poOpenInfo->fpL)
+    if (poOpenInfo->nHeaderBytes < PMTILES_HEADER_LENGTH || !poOpenInfo->fpL ||
+        !poOpenInfo->IsExtensionEqualToCI("pmtiles"))
+    {
         return FALSE;
+    }
     return memcmp(poOpenInfo->pabyHeader, "PMTiles\x03", 8) == 0;
 }
 
@@ -110,6 +113,7 @@ static GDALDataset *OGRPMTilesDriverVectorTranslateFrom(
     }
 
     GDALOpenInfo oOpenInfo(pszDestName, GA_ReadOnly);
+    oOpenInfo.nOpenFlags = GDAL_OF_VECTOR;
     return OGRPMTilesDriverOpen(&oOpenInfo);
 }
 
@@ -130,6 +134,7 @@ static GDALDataset *OGRPMTilesDriverCreate(const char *pszFilename, int nXSize,
             return nullptr;
         return poDS.release();
     }
+    CPLError(CE_Failure, CPLE_AppDefined, "Create() not supported for raster");
     return nullptr;
 }
 #endif
@@ -148,6 +153,7 @@ void RegisterOGRPMTiles()
     GDALDriver *poDriver = new GDALDriver();
 
     poDriver->SetDescription("PMTiles");
+    poDriver->SetMetadataItem(GDAL_DCAP_RASTER, "YES");
     poDriver->SetMetadataItem(GDAL_DCAP_VECTOR, "YES");
     poDriver->SetMetadataItem(GDAL_DMD_LONGNAME, "ProtoMap Tiles");
     poDriver->SetMetadataItem(GDAL_DMD_EXTENSIONS, "pmtiles");

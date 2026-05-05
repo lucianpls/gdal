@@ -7,6 +7,7 @@ add_gdal_driver(TARGET ogr_PMTiles
                   ogrpmtilestileiterator.cpp
                   ogrpmtilesfrommbtiles.cpp
                   ogrpmtileswriterdataset.cpp
+                  gdalpmtilesrasterband.cpp
                   vsipmtiles.cpp
                 BUILTIN
 )
