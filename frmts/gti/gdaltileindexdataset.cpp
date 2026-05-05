@@ -704,37 +704,148 @@ static std::string GetAbsoluteFileName(const char *pszTileName,
 }
 
 /************************************************************************/
-/*                   GTIDoPaletteExpansionIfNeeded()                    */
+/*                           IsGrayOrGrayA()                            */
 /************************************************************************/
 
-//! Do palette -> RGB(A) expansion
-static bool
-GTIDoPaletteExpansionIfNeeded(std::shared_ptr<GDALDataset> &poTileDS,
-                              int nBandCount)
+static bool IsGrayOrGrayA(GDALDataset *poDS)
 {
-    bool bRet = true;
+    return (poDS->GetRasterCount() == 1 &&
+            poDS->GetRasterBand(1)->GetRasterDataType() == GDT_Byte) ||
+           (poDS->GetRasterCount() == 2 &&
+            poDS->GetRasterBand(2)->GetColorInterpretation() == GCI_AlphaBand);
+}
+
+/************************************************************************/
+/*                            IsRGBOrRGBA()                             */
+/************************************************************************/
+
+static bool IsRGBOrRGBA(GDALDataset *poDS)
+{
+    return poDS->GetRasterCount() >= 3 && poDS->GetRasterCount() <= 4 &&
+           poDS->GetRasterBand(1)->GetColorInterpretation() == GCI_RedBand &&
+           poDS->GetRasterBand(2)->GetColorInterpretation() == GCI_GreenBand &&
+           poDS->GetRasterBand(3)->GetColorInterpretation() == GCI_BlueBand &&
+           (poDS->GetRasterCount() == 3 ||
+            poDS->GetRasterBand(4)->GetColorInterpretation() == GCI_AlphaBand);
+}
+
+/************************************************************************/
+/*                         GTIAdjustBandCount()                         */
+/************************************************************************/
+
+// Do palette -> RGB(A) expansion, G(A)/RGB(A) -> G(A)/RGB(A)
+
+static bool GTIAdjustBandCount(std::shared_ptr<GDALDataset> &poTileDS,
+                               int nBandCount, GDALDataset *poGTIDS)
+{
+    if (nBandCount == poTileDS->GetRasterCount())
+        return true;
+
+    CPLStringList aosOptions;
+
     if (poTileDS->GetRasterCount() == 1 &&
         (nBandCount == 3 || nBandCount == 4) &&
         poTileDS->GetRasterBand(1)->GetColorTable() != nullptr)
     {
-
-        CPLStringList aosOptions;
         aosOptions.AddString("-of");
         aosOptions.AddString("VRT");
 
         aosOptions.AddString("-expand");
         aosOptions.AddString(nBandCount == 3 ? "rgb" : "rgba");
-
-        GDALTranslateOptions *psOptions =
-            GDALTranslateOptionsNew(aosOptions.List(), nullptr);
-        int bUsageError = false;
-        auto poRGBDS = std::unique_ptr<GDALDataset>(GDALDataset::FromHandle(
-            GDALTranslate("", GDALDataset::ToHandle(poTileDS.get()), psOptions,
-                          &bUsageError)));
-        GDALTranslateOptionsFree(psOptions);
-        bRet = poRGBDS != nullptr;
-        poTileDS = std::move(poRGBDS);
     }
+
+    // G(A) -> G(A)
+    else if (IsGrayOrGrayA(poTileDS.get()) && poGTIDS && IsGrayOrGrayA(poGTIDS))
+    {
+        aosOptions.AddString("-of");
+        aosOptions.AddString("VRT");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        if (nBandCount == 2)
+        {
+            aosOptions.AddString("-b");
+            aosOptions.AddString("mask");
+        }
+    }
+
+    // G(A) -> RGB(A)
+    else if (IsGrayOrGrayA(poTileDS.get()) && poGTIDS && IsRGBOrRGBA(poGTIDS))
+    {
+        aosOptions.AddString("-of");
+        aosOptions.AddString("VRT");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        if (nBandCount == 4)
+        {
+            aosOptions.AddString("-b");
+            aosOptions.AddString("mask");
+        }
+    }
+
+    // RGB(A) -> RGB(A)
+    else if (IsRGBOrRGBA(poTileDS.get()) && poGTIDS && IsRGBOrRGBA(poGTIDS))
+    {
+        aosOptions.AddString("-of");
+        aosOptions.AddString("VRT");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("2");
+
+        aosOptions.AddString("-b");
+        aosOptions.AddString("3");
+
+        if (nBandCount == 4)
+        {
+            aosOptions.AddString("-b");
+            aosOptions.AddString("mask");
+        }
+    }
+
+    // GrGrGr(A) -> G(A)
+    else if (IsRGBOrRGBA(poTileDS.get()) && poGTIDS && IsGrayOrGrayA(poGTIDS))
+    {
+        aosOptions.AddString("-of");
+        aosOptions.AddString("VRT");
+
+        // We assume that the R,G,B channels actually contain the same value
+        // i.e. a gray scale image expanded as R,G,B
+        aosOptions.AddString("-b");
+        aosOptions.AddString("1");
+
+        if (nBandCount == 2)
+        {
+            aosOptions.AddString("-b");
+            aosOptions.AddString("mask");
+        }
+    }
+
+    else
+    {
+        return true;
+    }
+
+    GDALTranslateOptions *psOptions =
+        GDALTranslateOptionsNew(aosOptions.List(), nullptr);
+    int bUsageError = false;
+    auto poNewTileDS = std::unique_ptr<GDALDataset>(GDALDataset::FromHandle(
+        GDALTranslate("", GDALDataset::ToHandle(poTileDS.get()), psOptions,
+                      &bUsageError)));
+    GDALTranslateOptionsFree(psOptions);
+    const bool bRet = poNewTileDS != nullptr;
+    poTileDS = std::move(poNewTileDS);
     return bRet;
 }
 
@@ -1643,7 +1754,7 @@ bool GDALTileIndexDataset::Open(GDALOpenInfo *poOpenInfo)
         }
 
         // do palette -> RGB(A) expansion if needed
-        if (!GTIDoPaletteExpansionIfNeeded(poTileDS, nBandCount))
+        if (!GTIAdjustBandCount(poTileDS, nBandCount, nullptr))
             return false;
 
         const int nTileBandCount = poTileDS->GetRasterCount();
@@ -3851,7 +3962,7 @@ bool GDALTileIndexDataset::GetSourceDesc(const std::string &osTileName,
         }
 
         // do palette -> RGB(A) expansion if needed
-        if (!GTIDoPaletteExpansionIfNeeded(poTileDS, nBands))
+        if (!GTIAdjustBandCount(poTileDS, nBands, this))
             return false;
 
         bool bWarpVRT = false;
