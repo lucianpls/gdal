@@ -475,7 +475,7 @@ bool OGRPMTilesDataset::OpenRaster(int nZoomLevel)
         return false;
 
     const double dfRes = 2 * MAX_GM / (1 << nZoomLevel) / nTileSize;
-    constexpr double EPSILON = 1e-5;
+    constexpr double EPSILON = 1e-2;
 
     // Compute the raster georeferenced extent from the bounding box in the
     // PMTiles metadata

@@ -82,7 +82,19 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
     oObj.Set("scheme", "xyz");
 
     const auto osFormat = oObj.GetString("format", "{missing}");
-    if (osFormat != "pbf")
+    uint8_t tile_type = pmtiles::TILETYPE_UNKNOWN;
+    if (osFormat == "pbf")
+        tile_type = pmtiles::TILETYPE_MVT;
+    else if (osFormat == "png" || osFormat == "image/png")
+        tile_type = pmtiles::TILETYPE_PNG;
+    else if (osFormat == "jpg" || osFormat == "jpeg" ||
+             osFormat == "image/jpeg")
+        tile_type = pmtiles::TILETYPE_JPEG;
+    else if (osFormat == "webp" || osFormat == "image/webp")
+        tile_type = pmtiles::TILETYPE_WEBP;
+    else if (osFormat == "avif" || osFormat == "image/avif")
+        tile_type = pmtiles::TILETYPE_AVIF;
+    else
     {
         CPLError(CE_Failure, CPLE_AppDefined, "format=%s unhandled",
                  osFormat.c_str());
@@ -100,27 +112,6 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
     if (nMaxZoom < 0 || nMaxZoom > 255)
     {
         CPLError(CE_Failure, CPLE_AppDefined, "Missing or invalid maxzoom");
-        return false;
-    }
-
-    const CPLStringList aosCenter(
-        CSLTokenizeString2(oObj.GetString("center").c_str(), ",", 0));
-    if (aosCenter.size() != 3)
-    {
-        CPLError(CE_Failure, CPLE_AppDefined, "Expected 3 values for center");
-        return false;
-    }
-    const double dfCenterLong = CPLAtof(aosCenter[0]);
-    const double dfCenterLat = CPLAtof(aosCenter[1]);
-    if (std::fabs(dfCenterLong) > 180 || std::fabs(dfCenterLat) > 90)
-    {
-        CPLError(CE_Failure, CPLE_AppDefined, "Invalid center");
-        return false;
-    }
-    const int nCenterZoom = atoi(aosCenter[2]);
-    if (nCenterZoom < 0 || nCenterZoom > 255)
-    {
-        CPLError(CE_Failure, CPLE_AppDefined, "Missing or invalid center zoom");
         return false;
     }
 
@@ -142,6 +133,42 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
         return false;
     }
 
+    double dfCenterLong = 0;
+    double dfCenterLat = 0;
+    int nCenterZoom = 0;
+    const auto osCenter = oObj.GetString("center");
+    if (osCenter.empty())
+    {
+        dfCenterLong = (dfMinX + dfMaxX) / 2;
+        dfCenterLat = (dfMinY + dfMaxY) / 2;
+        nCenterZoom = nMaxZoom;
+    }
+    else
+    {
+        const CPLStringList aosCenter(
+            CSLTokenizeString2(osCenter.c_str(), ",", 0));
+        if (aosCenter.size() != 3)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "Expected 3 values for center");
+            return false;
+        }
+        dfCenterLong = CPLAtof(aosCenter[0]);
+        dfCenterLat = CPLAtof(aosCenter[1]);
+        if (std::fabs(dfCenterLong) > 180 || std::fabs(dfCenterLat) > 90)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined, "Invalid center");
+            return false;
+        }
+        nCenterZoom = atoi(aosCenter[2]);
+        if (nCenterZoom < 0 || nCenterZoom > 255)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "Missing or invalid center zoom");
+            return false;
+        }
+    }
+
     CPLJSONDocument oMetadataDoc;
     oMetadataDoc.SetRoot(oObj);
     osMetadata = oMetadataDoc.SaveAsString();
@@ -160,8 +187,10 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
     sHeader.tile_contents_count = 0;
     sHeader.clustered = true;
     sHeader.internal_compression = pmtiles::COMPRESSION_GZIP;
-    sHeader.tile_compression = pmtiles::COMPRESSION_GZIP;
-    sHeader.tile_type = pmtiles::TILETYPE_MVT;
+    sHeader.tile_compression = tile_type == pmtiles::TILETYPE_MVT
+                                   ? pmtiles::COMPRESSION_GZIP
+                                   : pmtiles::COMPRESSION_NONE;
+    sHeader.tile_type = tile_type;
     sHeader.min_zoom = static_cast<uint8_t>(nMinZoom);
     sHeader.max_zoom = static_cast<uint8_t>(nMaxZoom);
     sHeader.min_lon_e7 = static_cast<int32_t>(dfMinX * 10e6);

@@ -16,9 +16,14 @@
 
 #include "ogrpmtilesfrommbtiles.h"
 
+#include "mbtiles.h"
+
 #ifdef HAVE_MVT_WRITE_SUPPORT
 #include "mvtutils.h"
 #endif
+
+#include <algorithm>
+#include <cmath>
 
 /************************************************************************/
 /*                      OGRPMTilesDriverIdentify()                      */
@@ -119,7 +124,7 @@ static GDALDataset *OGRPMTilesDriverVectorTranslateFrom(
 
 #ifdef HAVE_MVT_WRITE_SUPPORT
 /************************************************************************/
-/*                               Create()                               */
+/*                       OGRPMTilesDriverCreate()                       */
 /************************************************************************/
 
 static GDALDataset *OGRPMTilesDriverCreate(const char *pszFilename, int nXSize,
@@ -138,6 +143,103 @@ static GDALDataset *OGRPMTilesDriverCreate(const char *pszFilename, int nXSize,
     return nullptr;
 }
 #endif
+
+/************************************************************************/
+/*                     OGRPMTilesDriverCreateCopy()                     */
+/************************************************************************/
+
+static GDALDataset *OGRPMTilesDriverCreateCopy(const char *pszFilename,
+                                               GDALDataset *poSrcDS, int,
+                                               CSLConstList papszOptions,
+                                               GDALProgressFunc pfnProgress,
+                                               void *pProgressData)
+{
+    auto poSrcDriver = poSrcDS->GetDriver();
+    if (poSrcDriver && EQUAL(poSrcDriver->GetDescription(), "MBTiles"))
+    {
+        if (papszOptions && papszOptions[0])
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "No creation option is supported for conversion of "
+                     "MBTiles to PMTiles");
+            return nullptr;
+        }
+        if (!OGRPMTilesConvertFromMBTiles(pszFilename,
+                                          poSrcDS->GetDescription()))
+            return nullptr;
+    }
+    else
+    {
+        auto poMBTilesDrv = GetGDALDriverManager()->GetDriverByName("MBTiles");
+        if (!poMBTilesDrv)
+        {
+            CPLError(
+                CE_Failure, CPLE_AppDefined,
+                "Conversion to PMTiles requires prior conversion to MBTiles");
+            return nullptr;
+        }
+        std::string osTmpMBTilesFilename =
+            CPLResetExtensionSafe(pszFilename, "mbtiles");
+        if (!VSIIsLocal(pszFilename))
+        {
+            osTmpMBTilesFilename =
+                CPLGenerateTempFilenameSafe(CPLGetFilename(pszFilename));
+        }
+
+        void *pScaledProgress = GDALCreateScaledProgress(
+            0.0, 2.0 / 3 * 0.9, pfnProgress, pProgressData);
+        std::unique_ptr<GDALDataset> poMBTilesDS(poMBTilesDrv->CreateCopy(
+            osTmpMBTilesFilename.c_str(), poSrcDS, false, papszOptions,
+            pScaledProgress ? GDALScaledProgress : nullptr, pScaledProgress));
+        GDALDestroyScaledProgress(pScaledProgress);
+        if (!poMBTilesDS)
+        {
+            VSIUnlink(osTmpMBTilesFilename.c_str());
+            return nullptr;
+        }
+        const int nMaxDim = std::max(poMBTilesDS->GetRasterXSize(),
+                                     poMBTilesDS->GetRasterYSize());
+        const int nBlockSize = std::clamp(
+            atoi(CSLFetchNameValueDef(papszOptions, "BLOCKSIZE", "256")), 64,
+            8192);
+        const int nOvrCount = static_cast<int>(
+            std::ceil(std::log2(static_cast<double>(nMaxDim) / nBlockSize)));
+        if (nOvrCount > 0)
+        {
+            std::vector<int> anLevels;
+            for (int i = 0; i < nOvrCount; ++i)
+                anLevels.push_back(1 << (i + 1));
+            const char *pszResampling =
+                CSLFetchNameValueDef(papszOptions, "RESAMPLING", "BILINEAR");
+            pScaledProgress = GDALCreateScaledProgress(
+                2.0 / 3 * 0.9, 0.9, pfnProgress, pProgressData);
+            const bool bOK =
+                (poMBTilesDS->BuildOverviews(
+                     pszResampling, nOvrCount, anLevels.data(), 0, nullptr,
+                     nullptr, nullptr, nullptr) == CE_None);
+            GDALDestroyScaledProgress(pScaledProgress);
+            if (!bOK)
+            {
+                poMBTilesDS.reset();
+                VSIUnlink(osTmpMBTilesFilename.c_str());
+                return nullptr;
+            }
+        }
+        poMBTilesDS.reset();
+        if (!OGRPMTilesConvertFromMBTiles(pszFilename,
+                                          osTmpMBTilesFilename.c_str()))
+        {
+            VSIUnlink(osTmpMBTilesFilename.c_str());
+            return nullptr;
+        }
+        if (pfnProgress)
+            pfnProgress(1.0, "", pProgressData);
+        VSIUnlink(osTmpMBTilesFilename.c_str());
+    }
+    GDALOpenInfo oOpenInfo(pszFilename, GA_ReadOnly);
+    oOpenInfo.nOpenFlags = GDAL_OF_RASTER | GDAL_OF_VECTOR;
+    return OGRPMTilesDriverOpen(&oOpenInfo);
+}
 
 /************************************************************************/
 /*                         RegisterOGRPMTiles()                         */
@@ -186,20 +288,15 @@ void RegisterOGRPMTiles()
         OGRPMTilesDriverCanVectorTranslateFrom;
     poDriver->pfnVectorTranslateFrom = OGRPMTilesDriverVectorTranslateFrom;
 
-#ifdef HAVE_MVT_WRITE_SUPPORT
     poDriver->SetMetadataItem(
         GDAL_DMD_CREATIONOPTIONLIST,
-        "<CreationOptionList>"
-        "  <Option name='NAME' scope='raster,vector' type='string' "
-        "description='Tileset name'/>"
-        "  <Option name='DESCRIPTION' scope='raster,vector' type='string' "
-        "description='A description of the layer'/>"
-        "  <Option name='TYPE' scope='raster,vector' type='string-select' "
-        "description='Layer type' default='overlay'>"
-        "    <Value>overlay</Value>"
-        "    <Value>baselayer</Value>"
-        "  </Option>" MVT_MBTILES_PMTILES_COMMON_DSCO "</CreationOptionList>");
+        "<CreationOptionList>" MBTILES_RASTER_CREATION_OPTIONS
+#ifdef HAVE_MVT_WRITE_SUPPORT
+        MVT_MBTILES_COMMON_DSCO
+#endif
+        "</CreationOptionList>");
 
+#ifdef HAVE_MVT_WRITE_SUPPORT
     poDriver->SetMetadataItem(GDAL_DCAP_CREATE_LAYER, "YES");
     poDriver->SetMetadataItem(GDAL_DCAP_CREATE_FIELD, "YES");
     poDriver->SetMetadataItem(GDAL_DMD_CREATIONFIELDDATATYPES,
@@ -211,6 +308,7 @@ void RegisterOGRPMTiles()
 
     poDriver->pfnCreate = OGRPMTilesDriverCreate;
 #endif
+    poDriver->pfnCreateCopy = OGRPMTilesDriverCreateCopy;
 
     GetGDALDriverManager()->RegisterDriver(poDriver);
 }

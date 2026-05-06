@@ -13,7 +13,7 @@
 
 import pytest
 
-from osgeo import gdal
+from osgeo import gdal, osr
 
 pytestmark = [
     pytest.mark.require_driver("PMTiles"),
@@ -149,3 +149,139 @@ def test_pmtiles_read_width_different_height():
     assert ds.GetRasterBand(3).ComputeStatistics(False) == pytest.approx(
         [0.0, 255.0, 62.815816627358494, 47.68216081549546], abs=1
     )
+
+
+###############################################################################
+
+
+@pytest.mark.require_driver("MBTILES")
+@pytest.mark.parametrize("tile_format", ["PNG", "JPEG", "WEBP"])
+def test_pmtiles_convert_from_pmtiles(tmp_path, tile_format):
+
+    if gdal.GetDriverByName(tile_format) is None:
+        pytest.skip(f"Driver {tile_format} is not available")
+
+    src_ds = gdal.GetDriverByName("MEM").Create("", 1, 2, 3)
+    src_ds.SetSpatialRef(osr.SpatialReference(epsg=3857))
+    # Aligns perfectly with tiling scheme at level = 17
+    # 1.194328566955879 = 6378137.0 * math.pi * 2 / (1 << 17) / 256
+    src_ds.SetGeoTransform(
+        [
+            999999.3658264879,
+            1.194328566955879,
+            0,
+            -999999.3658264879,
+            0,
+            -1.194328566955879,
+        ]
+    )
+    src_ds.GetRasterBand(1).Fill(255)
+    src_ds.GetRasterBand(2).Fill(255)
+    src_ds.GetRasterBand(3).Fill(255)
+    gdal.alg.raster.convert(
+        input=src_ds,
+        output=tmp_path / "tmp.mbtiles",
+        creation_option={"TILE_FORMAT": tile_format},
+    )
+    gdal.alg.raster.convert(
+        input=tmp_path / "tmp.mbtiles", output=tmp_path / "out.pmtiles"
+    )
+
+    ds = gdal.Open(tmp_path / "out.pmtiles")
+    assert ds.RasterXSize == 1
+    assert ds.RasterYSize == 2
+    if tile_format == "PNG":
+        assert ds.GetMetadataItem("format") == "png"
+    elif tile_format == "JPEG":
+        assert ds.GetMetadataItem("format") == "jpg"
+    else:
+        assert ds.GetMetadataItem("format") == "webp"
+
+    if tile_format != "JPEG":
+        assert ds.GetRasterBand(1).ComputeRasterMinMax() == (255, 255)
+
+
+###############################################################################
+
+
+@pytest.mark.require_driver("MBTILES")
+@pytest.mark.parametrize("tile_format", ["PNG", "JPEG", "WEBP"])
+def test_pmtiles_convert_from_non_pmtiles(tmp_vsimem, tile_format):
+
+    if gdal.GetDriverByName(tile_format) is None:
+        pytest.skip(f"Driver {tile_format} is not available")
+
+    src_ds = gdal.GetDriverByName("MEM").Create("", 1, 2, 3)
+    src_ds.SetSpatialRef(osr.SpatialReference(epsg=3857))
+    # Aligns perfectly with tiling scheme at level = 17
+    # 1.194328566955879 = 6378137.0 * math.pi * 2 / (1 << 17) / 256
+    src_ds.SetGeoTransform(
+        [
+            999999.3658264879,
+            1.194328566955879,
+            0,
+            -999999.3658264879,
+            0,
+            -1.194328566955879,
+        ]
+    )
+    src_ds.GetRasterBand(1).Fill(255)
+    src_ds.GetRasterBand(2).Fill(255)
+    src_ds.GetRasterBand(3).Fill(255)
+    gdal.alg.raster.convert(
+        input=src_ds,
+        output=tmp_vsimem / "out.pmtiles",
+        creation_option={"TILE_FORMAT": tile_format},
+    )
+
+    ds = gdal.Open(tmp_vsimem / "out.pmtiles")
+    assert ds.RasterXSize == 1
+    assert ds.RasterYSize == 2
+    if tile_format == "PNG":
+        assert ds.GetMetadataItem("format") == "png"
+    elif tile_format == "JPEG":
+        assert ds.GetMetadataItem("format") == "jpg"
+    else:
+        assert ds.GetMetadataItem("format") == "webp"
+
+    if tile_format != "JPEG":
+        assert ds.GetRasterBand(1).ComputeRasterMinMax() == (255, 255)
+
+
+###############################################################################
+
+
+@pytest.mark.require_driver("MBTILES")
+@pytest.mark.require_driver("PNG")
+@pytest.mark.parametrize(
+    "size,expected_ovr_count", [(256, 0), (257, 1), (512, 1), (513, 2)]
+)
+def test_pmtiles_convert_from_non_pmtiles_auto_add_overviews(
+    tmp_vsimem, size, expected_ovr_count
+):
+
+    src_ds = gdal.GetDriverByName("MEM").Create("", size, size, 3)
+    src_ds.SetSpatialRef(osr.SpatialReference(epsg=3857))
+    # Aligns perfectly with tiling scheme at level = 17
+    # 1.194328566955879 = 6378137.0 * math.pi * 2 / (1 << 17) / 256
+    src_ds.SetGeoTransform(
+        [
+            999999.3658264879,
+            1.194328566955879,
+            0,
+            -999999.3658264879,
+            0,
+            -1.194328566955879,
+        ]
+    )
+    src_ds.GetRasterBand(1).Fill(255)
+    src_ds.GetRasterBand(2).Fill(255)
+    src_ds.GetRasterBand(3).Fill(255)
+    gdal.alg.raster.convert(
+        input=src_ds,
+        output=tmp_vsimem / "out.pmtiles",
+        creation_option={"TILE_FORMAT": "PNG"},
+    )
+
+    ds = gdal.Open(tmp_vsimem / "out.pmtiles")
+    assert ds.GetRasterBand(1).GetOverviewCount() == expected_ovr_count
