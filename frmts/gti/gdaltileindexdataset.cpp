@@ -246,6 +246,9 @@ class GDALTileIndexDataset final : public GDALPamDataset
     //! Whether the GTI XML has been modified (by SetMetadata/SetMetadataItem)
     bool m_bXMLModified = false;
 
+    //! Allowed raster drivers
+    CPLStringList m_aosAllowedRasterDrivers{};
+
     //! Unique string (without the process) for this tile index. Passed to
     //! GDALProxyPoolDataset to ensure that sources are unique for a given owner
     const std::string m_osUniqueHandle;
@@ -856,6 +859,11 @@ static bool GTIAdjustBandCount(std::shared_ptr<GDALDataset> &poTileDS,
 bool GDALTileIndexDataset::Open(GDALOpenInfo *poOpenInfo)
 {
     eAccess = poOpenInfo->eAccess;
+
+    m_aosAllowedRasterDrivers = CPLStringList(
+        CSLTokenizeString2(CSLFetchNameValueDef(poOpenInfo->papszOpenOptions,
+                                                "ALLOWED_RASTER_DRIVERS", ""),
+                           ",", 0));
 
     CPLXMLNode *psRoot = nullptr;
     std::string osIndexDataset(poOpenInfo->pszFilename);
@@ -1746,7 +1754,8 @@ bool GDALTileIndexDataset::Open(GDALOpenInfo *poOpenInfo)
 
         auto poTileDS = std::shared_ptr<GDALDataset>(
             GDALDataset::Open(pszTileName,
-                              GDAL_OF_RASTER | GDAL_OF_VERBOSE_ERROR),
+                              GDAL_OF_RASTER | GDAL_OF_VERBOSE_ERROR,
+                              m_aosAllowedRasterDrivers.List()),
             GDALDatasetUniquePtrReleaser());
         if (!poTileDS)
         {
@@ -3126,7 +3135,8 @@ void GDALTileIndexDataset::LoadOverviews()
                                       ? osResolvedDSName.c_str()
                                       : GetDescription(),
                                   GDAL_OF_RASTER | GDAL_OF_VERBOSE_ERROR,
-                                  nullptr, aosNewOpenOptions.List(), nullptr));
+                                  m_aosAllowedRasterDrivers.List(),
+                                  aosNewOpenOptions.List(), nullptr));
 
             // Make it possible to use the Factor option on a GeoTIFF for
             // example and translate it to an overview level.
@@ -3219,8 +3229,8 @@ void GDALTileIndexDataset::LoadOverviews()
                                         ? osResolvedDSName.c_str()
                                         : GetDescription(),
                                     GDAL_OF_RASTER | GDAL_OF_VERBOSE_ERROR,
-                                    nullptr, aosNewOpenOptions.List(),
-                                    nullptr));
+                                    m_aosAllowedRasterDrivers.List(),
+                                    aosNewOpenOptions.List(), nullptr));
                             if (poOvrOfOvrDS &&
                                 poOvrOfOvrDS->GetRasterCount() ==
                                     GetRasterCount() &&
@@ -3945,7 +3955,8 @@ bool GDALTileIndexDataset::GetSourceDesc(const std::string &osTileName,
         poTileDS = std::shared_ptr<GDALDataset>(
             GDALProxyPoolDataset::Create(
                 osTileName.c_str(), nullptr, GA_ReadOnly,
-                /* bShared = */ true, m_osUniqueHandle.c_str()),
+                /* bShared = */ true, m_osUniqueHandle.c_str(),
+                m_aosAllowedRasterDrivers.List()),
             GDALDatasetUniquePtrReleaser());
         if (!poTileDS)
         {
@@ -5827,6 +5838,8 @@ void GDALRegister_GTI()
         "  <Option name='WARPING_MEMORY_SIZE' type='string' description="
         "'Set the amount of memory that the warp API is allowed to use for "
         "caching' default='64MB'/>"
+        "  <Option name='ALLOWED_RASTER_DRIVERS' type='string' description="
+        "'Comma-separated list of allowed raster driver names'/>"
         "</OpenOptionList>");
 
 #ifdef GDAL_ENABLE_ALGORITHMS
