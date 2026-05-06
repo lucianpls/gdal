@@ -338,7 +338,7 @@ The following creation options are available:
 
          Whether to write the bounds 'metadata' item.
 
-   -  .. oo:: ELEVATION_TYPE
+   -  .. co:: ELEVATION_TYPE
          :choices: '', 'terrain-rgb'
          :default: ''
 
