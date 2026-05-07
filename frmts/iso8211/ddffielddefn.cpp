@@ -486,7 +486,7 @@ bool DDFFieldDefn::BuildSubfields()
                     CPLError(CE_Failure, CPLE_NotSupported,
                              "Tag %s: repeated fields found in a part that is "
                              "not the last one: %s",
-                             osTag.c_str(), pszSublist);
+                             osTag.c_str(), _arrayDescr.c_str());
                     return false;
                 }
 
