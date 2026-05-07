@@ -556,7 +556,7 @@ static void GDALCollectRingsFromGeometry(const OGRGeometry *poShape,
  * @param bAllTouched burn value to all touched pixels?
  * @param poShape geometry to rasterize, in original coordinates.
  *                Since GDAL 3.14, curved geometries will be linearized before
- *                rasterization.
+ *                rasterization. (In previous versions, they are ignored.)
  * @param eBurnValueType type of value to be burned (must be Float64 or Int64)
  * @param padfBurnValues array of nBands values to burn (Float64), or nullptr
  * @param panBurnValues array of nBands values to burn (Int64), or nullptr
