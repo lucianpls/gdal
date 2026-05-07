@@ -27,6 +27,7 @@
 #include <array>
 #include <cassert>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 /************************************************************************/
@@ -353,129 +354,97 @@ bool OGRPMTilesConvertFromMBTiles(const char *pszDestName,
               [](const TileEntry &a, const TileEntry &b)
               { return a.nTileId < b.nTileId; });
 
-    // Let's build a temporary file that contains the tile data in
+    // Let's gather tile data in
     // a way that corresponds to the "clustered" mode, that is
     // "offsets are either contiguous with the previous offset+length, or
     // refer to a lesser offset, when writing with deduplication."
-    std::string osTmpFile(std::string(pszDestName) + ".tmp");
-    if (!VSIIsLocal(pszDestName))
-    {
-        osTmpFile = CPLGenerateTempFilenameSafe(CPLGetFilename(pszDestName));
-    }
-
-    auto poTmpFile =
-        VSIVirtualHandleUniquePtr(VSIFOpenL(osTmpFile.c_str(), "wb+"));
-    VSIUnlink(osTmpFile.c_str());
-    if (!poTmpFile)
-    {
-        CPLError(CE_Failure, CPLE_FileIO, "Cannot open %s for write",
-                 osTmpFile.c_str());
-        return false;
-    }
-
-    struct ResetAndUnlinkTmpFile
-    {
-        VSIVirtualHandleUniquePtr &m_poFile;
-        std::string m_osFilename;
-
-        ResetAndUnlinkTmpFile(VSIVirtualHandleUniquePtr &poFile,
-                              const std::string &osFilename)
-            : m_poFile(poFile), m_osFilename(osFilename)
-        {
-        }
-
-        ~ResetAndUnlinkTmpFile()
-        {
-            m_poFile.reset();
-            VSIUnlink(m_osFilename.c_str());
-        }
-    };
-
-    ResetAndUnlinkTmpFile oReseer(poTmpFile, osTmpFile);
 
     std::vector<pmtiles::entryv3> asPMTilesEntries;
-    uint64_t nLastTileId = 0;
     uint64_t nFileOffset = 0;
-    std::array<unsigned char, 16> abyLastMD5;
     std::unordered_map<std::array<unsigned char, 16>,
                        std::pair<uint64_t, uint32_t>,
                        HashArray<unsigned char, 16>>
         oMapMD5ToOffsetLen;
-    for (const auto &sEntry : asTileEntries)
     {
-        if (sEntry.nTileId == nLastTileId + 1 && sEntry.abyMD5 == abyLastMD5)
+        uint64_t nLastTileId = 0;
+        std::array<unsigned char, 16> abyLastMD5{0, 0, 0, 0, 0, 0, 0, 0,
+                                                 0, 0, 0, 0, 0, 0, 0, 0};
+        for (const auto &sEntry : asTileEntries)
         {
-            // If the tile id immediately follows the previous one and
-            // has the same tile data, increase the run_length
-            asPMTilesEntries.back().run_length++;
-        }
-        else
-        {
-            pmtiles::entryv3 sPMTilesEntry;
-            sPMTilesEntry.tile_id = sEntry.nTileId;
-            sPMTilesEntry.run_length = 1;
-
-            auto oIter = oMapMD5ToOffsetLen.find(sEntry.abyMD5);
-            if (oIter != oMapMD5ToOffsetLen.end())
+            if (sEntry.nTileId == nLastTileId + 1 &&
+                sEntry.abyMD5 == abyLastMD5)
             {
-                // Point to previously written tile data if this content
-                // has already been written
-                sPMTilesEntry.offset = oIter->second.first;
-                sPMTilesEntry.length = oIter->second.second;
+                // If the tile id immediately follows the previous one and
+                // has the same tile data, increase the run_length
+                asPMTilesEntries.back().run_length++;
             }
             else
             {
-                try
+                pmtiles::entryv3 sPMTilesEntry;
+                sPMTilesEntry.tile_id = sEntry.nTileId;
+                sPMTilesEntry.run_length = 1;
+
+                auto oIter = oMapMD5ToOffsetLen.find(sEntry.abyMD5);
+                if (oIter != oMapMD5ToOffsetLen.end())
                 {
-                    const auto sXYZ = pmtiles::tileid_to_zxy(sEntry.nTileId);
-                    poTilesLayer->SetAttributeFilter(CPLSPrintf(
-                        "zoom_level = %d AND tile_column = %u AND tile_row = "
-                        "%u",
-                        sXYZ.z, sXYZ.x, (1U << sXYZ.z) - 1U - sXYZ.y));
+                    // Point to previously written tile data if this content
+                    // has already been written
+                    sPMTilesEntry.offset = oIter->second.first;
+                    sPMTilesEntry.length = oIter->second.second;
                 }
-                catch (const std::exception &e)
+                else
                 {
-                    // shouldn't happen given previous checks
-                    CPLError(CE_Failure, CPLE_AppDefined,
-                             "Cannot compute xyz: %s", e.what());
-                    return false;
-                }
-                poTilesLayer->ResetReading();
-                auto poFeature =
-                    std::unique_ptr<OGRFeature>(poTilesLayer->GetNextFeature());
-                if (!poFeature)
-                {
-                    CPLError(CE_Failure, CPLE_AppDefined, "Cannot find tile");
-                    return false;
-                }
-                int nTileDataLength = 0;
-                const GByte *pabyData =
-                    poFeature->GetFieldAsBinary(iTileData, &nTileDataLength);
-                if (!pabyData)
-                {
-                    CPLError(CE_Failure, CPLE_AppDefined, "Missing tile_data");
-                    return false;
+                    try
+                    {
+                        const auto sXYZ =
+                            pmtiles::tileid_to_zxy(sEntry.nTileId);
+                        poTilesLayer->SetAttributeFilter(CPLSPrintf(
+                            "zoom_level = %d AND tile_column = %u AND tile_row "
+                            "= "
+                            "%u",
+                            sXYZ.z, sXYZ.x, (1U << sXYZ.z) - 1U - sXYZ.y));
+                    }
+                    catch (const std::exception &e)
+                    {
+                        // shouldn't happen given previous checks
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Cannot compute xyz: %s", e.what());
+                        return false;
+                    }
+                    poTilesLayer->ResetReading();
+                    auto poFeature = std::unique_ptr<OGRFeature>(
+                        poTilesLayer->GetNextFeature());
+                    if (!poFeature)
+                    {
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Cannot find tile");
+                        return false;
+                    }
+                    int nTileDataLength = 0;
+                    const GByte *pabyData = poFeature->GetFieldAsBinary(
+                        iTileData, &nTileDataLength);
+                    if (!pabyData)
+                    {
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Missing tile_data");
+                        return false;
+                    }
+
+                    sPMTilesEntry.offset = nFileOffset;
+                    sPMTilesEntry.length = nTileDataLength;
+
+                    oMapMD5ToOffsetLen[sEntry.abyMD5] =
+                        std::pair<uint64_t, uint32_t>(nFileOffset,
+                                                      nTileDataLength);
+
+                    nFileOffset += nTileDataLength;
                 }
 
-                sPMTilesEntry.offset = nFileOffset;
-                sPMTilesEntry.length = nTileDataLength;
+                asPMTilesEntries.push_back(sPMTilesEntry);
 
-                oMapMD5ToOffsetLen[sEntry.abyMD5] =
-                    std::pair<uint64_t, uint32_t>(nFileOffset, nTileDataLength);
-
-                nFileOffset += nTileDataLength;
-
-                if (poTmpFile->Write(pabyData, nTileDataLength, 1) != 1)
-                {
-                    CPLError(CE_Failure, CPLE_FileIO, "Failed writing");
-                    return false;
-                }
+                nLastTileId = sEntry.nTileId;
+                abyLastMD5 = sEntry.abyMD5;
             }
-
-            asPMTilesEntries.push_back(sPMTilesEntry);
-
-            nLastTileId = sEntry.nTileId;
-            abyLastMD5 = sEntry.abyMD5;
         }
     }
 
@@ -554,7 +523,7 @@ bool OGRPMTilesConvertFromMBTiles(const char *pszDestName,
     // Number of distinct tile blobs
     sHeader.tile_contents_count = oMapMD5ToOffsetLen.size();
 
-    // Now build the final file!
+    // Now build the file!
     auto poFile = VSIVirtualHandleUniquePtr(VSIFOpenL(pszDestName, "wb"));
     if (!poFile)
     {
@@ -564,8 +533,7 @@ bool OGRPMTilesConvertFromMBTiles(const char *pszDestName,
     }
     const auto osHeader = sHeader.serialize();
 
-    if (poTmpFile->Seek(0, SEEK_SET) != 0 ||
-        poFile->Write(osHeader.data(), osHeader.size(), 1) != 1 ||
+    if (poFile->Write(osHeader.data(), osHeader.size(), 1) != 1 ||
         poFile->Write(osRootBytes.data(), osRootBytes.size(), 1) != 1 ||
         poFile->Write(osCompressedMetadata.data(), osCompressedMetadata.size(),
                       1) != 1 ||
@@ -576,22 +544,82 @@ bool OGRPMTilesConvertFromMBTiles(const char *pszDestName,
         return false;
     }
 
-    // Copy content of the temporary file at end of the output file.
-    std::string oCopyBuffer;
-    oCopyBuffer.resize(1024 * 1024);
-    const uint64_t nTotalSize = nFileOffset;
-    nFileOffset = 0;
-    while (nFileOffset < nTotalSize)
+    // Copy tile content at end of the output file.
     {
-        const size_t nToRead = static_cast<size_t>(
-            std::min<uint64_t>(nTotalSize - nFileOffset, oCopyBuffer.size()));
-        if (poTmpFile->Read(&oCopyBuffer[0], nToRead, 1) != 1 ||
-            poFile->Write(&oCopyBuffer[0], nToRead, 1) != 1)
+        uint64_t nLastTileId = 0;
+        uint64_t nFileOffset2 = 0;
+        std::array<unsigned char, 16> abyLastMD5{0, 0, 0, 0, 0, 0, 0, 0,
+                                                 0, 0, 0, 0, 0, 0, 0, 0};
+        std::unordered_set<std::array<unsigned char, 16>,
+                           HashArray<unsigned char, 16>>
+            oSetMD5;
+        for (const auto &sEntry : asTileEntries)
         {
-            CPLError(CE_Failure, CPLE_FileIO, "Failed writing");
-            return false;
+            if (sEntry.nTileId == nLastTileId + 1 &&
+                sEntry.abyMD5 == abyLastMD5)
+            {
+                // If the tile id immediately follows the previous one and
+                // has the same tile data, do nothing
+            }
+            else
+            {
+                auto oIter = oSetMD5.find(sEntry.abyMD5);
+                if (oIter == oSetMD5.end())
+                {
+                    try
+                    {
+                        const auto sXYZ =
+                            pmtiles::tileid_to_zxy(sEntry.nTileId);
+                        poTilesLayer->SetAttributeFilter(CPLSPrintf(
+                            "zoom_level = %d AND tile_column = %u AND tile_row "
+                            "= "
+                            "%u",
+                            sXYZ.z, sXYZ.x, (1U << sXYZ.z) - 1U - sXYZ.y));
+                    }
+                    catch (const std::exception &e)
+                    {
+                        // shouldn't happen given previous checks
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Cannot compute xyz: %s", e.what());
+                        return false;
+                    }
+                    poTilesLayer->ResetReading();
+                    auto poFeature = std::unique_ptr<OGRFeature>(
+                        poTilesLayer->GetNextFeature());
+                    if (!poFeature)
+                    {
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Cannot find tile");
+                        return false;
+                    }
+                    int nTileDataLength = 0;
+                    const GByte *pabyData = poFeature->GetFieldAsBinary(
+                        iTileData, &nTileDataLength);
+                    if (!pabyData)
+                    {
+                        CPLError(CE_Failure, CPLE_AppDefined,
+                                 "Missing tile_data");
+                        return false;
+                    }
+
+                    oSetMD5.insert(sEntry.abyMD5);
+
+                    if (poFile->Write(pabyData, nTileDataLength, 1) != 1)
+                    {
+                        CPLError(CE_Failure, CPLE_FileIO, "Failed writing");
+                        return false;
+                    }
+
+                    nFileOffset2 += nTileDataLength;
+                }
+
+                nLastTileId = sEntry.nTileId;
+                abyLastMD5 = sEntry.abyMD5;
+            }
         }
-        nFileOffset += nToRead;
+
+        CPL_IGNORE_RET_VAL(nFileOffset2);
+        CPLAssert(nFileOffset2 == nFileOffset);
     }
 
     if (poFile->Close() != 0)
