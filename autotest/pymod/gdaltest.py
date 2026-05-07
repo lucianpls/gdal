@@ -2179,11 +2179,15 @@ def gdal_has_vrt_expression_dialect(dialect):
 ###############################################################################
 
 
-def importorskip_gdal_array():
+def importorskip(lib):
     pytest_version = [int(x) for x in pytest.__version__.split(".")]
     if pytest_version >= [8, 2, 0]:
-        return pytest.importorskip("osgeo.gdal_array", exc_type=ImportError)
-    return pytest.importorskip("osgeo.gdal_array")
+        return pytest.importorskip(lib, exc_type=ImportError)
+    return pytest.importorskip(lib)
+
+
+def importorskip_gdal_array():
+    return importorskip("osgeo.gdal_array")
 
 
 ###############################################################################
