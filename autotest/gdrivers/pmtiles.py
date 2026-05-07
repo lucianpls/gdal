@@ -206,7 +206,10 @@ def test_pmtiles_convert_from_pmtiles(tmp_path, tile_format):
 
 @pytest.mark.require_driver("MBTILES")
 @pytest.mark.parametrize("tile_format", ["PNG", "JPEG", "WEBP"])
-def test_pmtiles_convert_from_non_pmtiles(tmp_vsimem, tile_format):
+@pytest.mark.parametrize("use_gdal_raster_tile", [True, False])
+def test_pmtiles_convert_from_non_pmtiles(
+    tmp_vsimem, tile_format, use_gdal_raster_tile
+):
 
     if gdal.GetDriverByName(tile_format) is None:
         pytest.skip(f"Driver {tile_format} is not available")
@@ -228,10 +231,13 @@ def test_pmtiles_convert_from_non_pmtiles(tmp_vsimem, tile_format):
     src_ds.GetRasterBand(1).Fill(255)
     src_ds.GetRasterBand(2).Fill(255)
     src_ds.GetRasterBand(3).Fill(255)
+    options = {"TILE_FORMAT": tile_format}
+    if not use_gdal_raster_tile:
+        options["ZOOM_LEVEL_STRATEGY"] = "LOWER"
     gdal.alg.raster.convert(
         input=src_ds,
         output=tmp_vsimem / "out.pmtiles",
-        creation_option={"TILE_FORMAT": tile_format},
+        creation_option=options,
     )
 
     ds = gdal.Open(tmp_vsimem / "out.pmtiles")
@@ -253,11 +259,12 @@ def test_pmtiles_convert_from_non_pmtiles(tmp_vsimem, tile_format):
 
 @pytest.mark.require_driver("MBTILES")
 @pytest.mark.require_driver("PNG")
+@pytest.mark.parametrize("format", ["PNG", "PNG8"])
 @pytest.mark.parametrize(
     "size,expected_ovr_count", [(256, 0), (257, 1), (512, 1), (513, 2)]
 )
 def test_pmtiles_convert_from_non_pmtiles_auto_add_overviews(
-    tmp_vsimem, size, expected_ovr_count
+    tmp_path, format, size, expected_ovr_count
 ):
 
     src_ds = gdal.GetDriverByName("MEM").Create("", size, size, 3)
@@ -279,9 +286,9 @@ def test_pmtiles_convert_from_non_pmtiles_auto_add_overviews(
     src_ds.GetRasterBand(3).Fill(255)
     gdal.alg.raster.convert(
         input=src_ds,
-        output=tmp_vsimem / "out.pmtiles",
-        creation_option={"TILE_FORMAT": "PNG"},
+        output=tmp_path / "out.pmtiles",
+        creation_option={"TILE_FORMAT": format},
     )
 
-    ds = gdal.Open(tmp_vsimem / "out.pmtiles")
+    ds = gdal.Open(tmp_path / "out.pmtiles")
     assert ds.GetRasterBand(1).GetOverviewCount() == expected_ovr_count

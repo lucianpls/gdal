@@ -206,29 +206,6 @@ static bool ProcessMetadata(GDALDataset *poSQLiteDS, pmtiles::headerv3 &sHeader,
 }
 
 /************************************************************************/
-/*                             HashArray()                              */
-/************************************************************************/
-
-// From https://codereview.stackexchange.com/questions/171999/specializing-stdhash-for-stdarray
-// We do not use std::hash<std::array<T, N>> as the name of the struct
-// because with gcc 5.4 we get the following error:
-// https://stackoverflow.com/questions/25594644/warning-specialization-of-template-in-different-namespace
-template <class T, size_t N> struct HashArray
-{
-    CPL_NOSANITIZE_UNSIGNED_INT_OVERFLOW
-    size_t operator()(const std::array<T, N> &key) const
-    {
-        std::hash<T> hasher;
-        size_t result = 0;
-        for (size_t i = 0; i < N; ++i)
-        {
-            result = result * 31 + hasher(key[i]);
-        }
-        return result;
-    }
-};
-
-/************************************************************************/
 /*                    OGRPMTilesConvertFromMBTiles()                    */
 /************************************************************************/
 
