@@ -1067,7 +1067,7 @@ png_zstream_error(png_structrp png_ptr, int ret)
 
 #ifdef PNG_COLORSPACE_SUPPORTED
 static png_int_32
-png_fp_add(png_int_32 addend0, png_int_32 addend1, int *error)
+png_fp_add_func(png_int_32 addend0, png_int_32 addend1, int *error)
 {
    /* Safely add two fixed point values setting an error flag and returning 0.5
     * on overflow.
@@ -1121,8 +1121,8 @@ png_safe_add(png_int_32 *addend0_and_result, png_int_32 addend1,
     * set the result on overflow.
     */
    int error = 0;
-   int result = png_fp_add(*addend0_and_result,
-                           png_fp_add(addend1, addend2, &error),
+   int result = png_fp_add_func(*addend0_and_result,
+                           png_fp_add_func(addend1, addend2, &error),
                            &error);
    if (!error) *addend0_and_result = result;
    return error;

@@ -2954,7 +2954,10 @@ png_handle_unknown(png_structrp png_ptr, png_inforp info_ptr,
 
    /* Check for unhandled critical chunks */
    if (handled < handled_saved && PNG_CHUNK_CRITICAL(png_ptr->chunk_name))
-      png_chunk_error(png_ptr, "unhandled critical chunk");
+   {
+      /* GDAL change : png_chunk_error -> png_chunk_warning */
+      png_chunk_warning(png_ptr, "unhandled critical chunk");
+   }
 
    return handled;
 }
