@@ -554,7 +554,9 @@ static void GDALCollectRingsFromGeometry(const OGRGeometry *poShape,
  * @param nBandSpace number of bytes between adjacent bands in chunk
  *                   (0 to calculate automatically)
  * @param bAllTouched burn value to all touched pixels?
- * @param poShape geometry to rasterize, in original coordinates
+ * @param poShape geometry to rasterize, in original coordinates.
+ *                Since GDAL 3.14, curved geometries will be linearized before
+ *                rasterization.
  * @param eBurnValueType type of value to be burned (must be Float64 or Int64)
  * @param padfBurnValues array of nBands values to burn (Float64), or nullptr
  * @param panBurnValues array of nBands values to burn (Int64), or nullptr
@@ -576,8 +578,23 @@ static void gv_rasterize_one_shape(
     void *pTransformArg)
 
 {
+    std::unique_ptr<OGRGeometry> poLinearizedShape;
+
     if (poShape == nullptr || poShape->IsEmpty())
         return;
+
+    if (poShape->hasCurveGeometry())
+    {
+        poLinearizedShape.reset(poShape->getLinearGeometry());
+        if (!poLinearizedShape)
+        {
+            CPLError(CE_Failure, CPLE_AppDefined,
+                     "Failed to linearize geometry");
+            return;
+        }
+        poShape = poLinearizedShape.get();
+    }
+
     const auto eGeomType = wkbFlatten(poShape->getGeometryType());
 
     if ((eGeomType == wkbMultiLineString || eGeomType == wkbMultiPolygon ||
@@ -891,7 +908,8 @@ static CPLErr GDALRasterizeGeometriesInternal(
  * @param nBandCount the number of bands to be updated.
  * @param panBandList the list of bands to be updated.
  * @param nGeomCount the number of geometries being passed in pahGeometries.
- * @param pahGeometries the array of geometries to burn in.
+ * @param pahGeometries the array of geometries to burn in. Since GDAL 3.14,
+ *                      curved geometries will be converted to linear types.
  * @param pfnTransformer transformation to apply to geometries to put into
  * pixel/line coordinates on raster.  If NULL a geotransform based one will
  * be created internally.
