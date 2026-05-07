@@ -1086,18 +1086,16 @@ static CPLErr GDALRasterizeGeometriesInternal(
     {
         bNeedToFreeTransformer = true;
 
-        char **papszTransformerOptions = nullptr;
+        CPLStringList aosTransformerOptions;
         GDALGeoTransform gt;
         if (poDS->GetGeoTransform(gt) != CE_None && poDS->GetGCPCount() == 0 &&
             poDS->GetMetadata("RPC") == nullptr)
         {
-            papszTransformerOptions = CSLSetNameValue(
-                papszTransformerOptions, "DST_METHOD", "NO_GEOTRANSFORM");
+            aosTransformerOptions.SetNameValue("DST_METHOD", "NO_GEOTRANSFORM");
         }
 
         pTransformArg = GDALCreateGenImgProjTransformer2(
-            nullptr, hDS, papszTransformerOptions);
-        CSLDestroy(papszTransformerOptions);
+            nullptr, hDS, aosTransformerOptions.List());
 
         pfnTransformer = GDALGenImgProjTransform;
         if (pTransformArg == nullptr)
@@ -1695,24 +1693,22 @@ CPLErr GDALRasterizeLayers(GDALDatasetH hDS, int nBandCount, int *panBandList,
                 poSRS->exportToWkt(&pszProjection);
             }
 
-            char **papszTransformerOptions = nullptr;
+            CPLStringList aosTransformerOptions;
             if (pszProjection != nullptr)
-                papszTransformerOptions = CSLSetNameValue(
-                    papszTransformerOptions, "SRC_SRS", pszProjection);
+                aosTransformerOptions.SetNameValue("SRC_SRS", pszProjection);
             GDALGeoTransform gt;
             if (poDS->GetGeoTransform(gt) != CE_None &&
                 poDS->GetGCPCount() == 0 && poDS->GetMetadata("RPC") == nullptr)
             {
-                papszTransformerOptions = CSLSetNameValue(
-                    papszTransformerOptions, "DST_METHOD", "NO_GEOTRANSFORM");
+                aosTransformerOptions.SetNameValue("DST_METHOD",
+                                                   "NO_GEOTRANSFORM");
             }
 
             pTransformArg = GDALCreateGenImgProjTransformer2(
-                nullptr, hDS, papszTransformerOptions);
+                nullptr, hDS, aosTransformerOptions.List());
             pfnTransformer = GDALGenImgProjTransform;
 
             CPLFree(pszProjection);
-            CSLDestroy(papszTransformerOptions);
             if (pTransformArg == nullptr)
             {
                 CPLFree(pabyChunkBuf);
