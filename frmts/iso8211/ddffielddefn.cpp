@@ -296,7 +296,8 @@ int DDFFieldDefn::Initialize(DDFModule *poModuleIn, const char *pszTagIn,
             _data_type_code = dtc_char_string;
     }
 
-    _escapeSequence.assign(pachFieldArea + 6, iFDOffset - 6);
+    if (nFieldEntrySize >= iFDOffset && iFDOffset > 6)
+        _escapeSequence.assign(pachFieldArea + 6, iFDOffset - 6);
 
     /* -------------------------------------------------------------------- */
     /*      Capture the field name, description (sub field names), and      */
